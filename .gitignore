@@ -1,0 +1,9 @@
+# Node
+node_modules/
+
+# Variables de entorno
+.env
+
+# Claves de Google / Dialogflow
+hulkbot-udaa-047583da7f68.json
+*.json
