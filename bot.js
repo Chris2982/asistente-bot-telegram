@@ -8,23 +8,35 @@ import fetch from "node-fetch";
 import dialogflow from "@google-cloud/dialogflow";
 
 /******************************************************************
- * ⚙️ CONFIGURACIÓN GENERAL
+ * ⚙️ VARIABLES DE ENTORNO
  ******************************************************************/
 const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN;
 const DEEPSEEK_API_KEY = process.env.DEEPSEEK_API_KEY;
 const DF_PROJECT_ID = process.env.DF_PROJECT_ID;
+const PORT = process.env.PORT || 3001;
 
 if (!TELEGRAM_TOKEN) console.error("❌ FALTA TELEGRAM_TOKEN");
 if (!DEEPSEEK_API_KEY) console.error("❌ FALTA DEEPSEEK_API_KEY");
 if (!DF_PROJECT_ID) console.error("❌ FALTA DF_PROJECT_ID");
 
 /******************************************************************
- * 🤖 CLIENTE DIALOGFLOW (SDK OFICIAL)
+ * 🌐 APP EXPRESS
+ ******************************************************************/
+const app = express();
+app.use(express.json());
+
+/******************************************************************
+ * 🤖 BOT TELEGRAM
+ ******************************************************************/
+const bot = new Telegraf(TELEGRAM_TOKEN);
+
+/******************************************************************
+ * 🤖 CLIENTE DIALOGFLOW
  ******************************************************************/
 const dfClient = new dialogflow.SessionsClient();
 
 /******************************************************************
- * 🧠 DETECTAR INTENCIÓN CON DIALOGFLOW (PASO 9 REAL)
+ * 🧠 DETECTAR INTENCIÓN (DIALOGFLOW)
  ******************************************************************/
 async function detectIntent(text, sessionId) {
   try {
@@ -43,18 +55,16 @@ async function detectIntent(text, sessionId) {
       }
     };
 
-    const responses = await dfClient.detectIntent(request);
-    const result = responses[0].queryResult;
-
-    return result.intent?.displayName || "Default Fallback Intent";
-  } catch (err) {
-    console.error("❌ Error Dialogflow:", err);
+    const [response] = await dfClient.detectIntent(request);
+    return response.queryResult.intent?.displayName || "Default Fallback Intent";
+  } catch (error) {
+    console.error("❌ Error Dialogflow:", error);
     return "Default Fallback Intent";
   }
 }
 
 /******************************************************************
- * 🤖 FUNCIÓN IA — SOLO FALLBACK
+ * 🤖 IA (DEEPSEEK) — SOLO FALLBACK
  ******************************************************************/
 async function askDeepSeek(text) {
   try {
@@ -84,29 +94,22 @@ async function askDeepSeek(text) {
 
     const data = await response.json();
     return data.choices?.[0]?.message?.content || "No pude responder.";
-  } catch (err) {
-    console.error("❌ Error IA:", err);
+  } catch (error) {
+    console.error("❌ Error IA:", error);
     return "⚠ Error con la IA.";
   }
 }
 
 /******************************************************************
- * 🤖 BOT TELEGRAM
- ******************************************************************/
-const bot = new Telegraf(TELEGRAM_TOKEN);
-
-/******************************************************************
  * /start
  ******************************************************************/
-bot.start(async (ctx) => {
-  await ctx.reply(
-    `¡Hola ${ctx.from.first_name}! 👋\nSoy tu asistente empresarial.`
-  );
-  await ctx.reply("Escribe tu consulta 🙂");
+bot.start((ctx) => {
+  ctx.reply(`¡Hola ${ctx.from.first_name}! 👋`);
+  ctx.reply("Escribe tu consulta 🙂");
 });
 
 /******************************************************************
- * TEXTO NORMAL — FLUJO PASO 9
+ * MENSAJES DE TEXTO
  ******************************************************************/
 bot.on("text", async (ctx) => {
   const text = ctx.message.text;
@@ -114,70 +117,50 @@ bot.on("text", async (ctx) => {
 
   console.log("📩 MENSAJE TELEGRAM:", text);
 
-  // 1️⃣ Dialogflow detecta intención
   const intent = await detectIntent(text, ctx.from.id);
-
   console.log("🎯 INTENCIÓN DETECTADA:", intent);
 
-  // 2️⃣ Respuestas controladas
   if (intent === "info") {
-    return ctx.reply(
-      "ℹ️ Brindamos información general sobre nuestros servicios."
-    );
+    return ctx.reply("ℹ️ Brindamos información general sobre nuestros servicios.");
   }
 
   if (intent === "support") {
-    return ctx.reply(
-      "🛠️ Soporte técnico: soporte@tudominio.com"
-    );
+    return ctx.reply("🛠️ Soporte técnico: soporte@tudominio.com");
   }
 
-  // 3️⃣ Fallback IA
   const aiReply = await askDeepSeek(text);
   return ctx.reply(aiReply);
 });
 
 /******************************************************************
- * 🚀 LANZAR BOT
+ * 🔁 WEBHOOK PARA PRODUCCIÓN (RENDER)
  ******************************************************************/
-(async () => {
-  try {
-    const isProduction = process.env.RENDER === "true";
+if (process.env.RENDER) {
+  const WEBHOOK_PATH = "/telegram";
+  const WEBHOOK_URL = `${process.env.RENDER_EXTERNAL_URL}${WEBHOOK_PATH}`;
 
-    if (isProduction) {
-      const domain = process.env.RENDER_EXTERNAL_URL;
+  app.use(WEBHOOK_PATH, bot.webhookCallback(WEBHOOK_PATH));
 
-      await bot.launch({
-        webhook: {
-          domain
-        }
-      });
+  bot.telegram.setWebhook(WEBHOOK_URL);
 
-      console.log("🚀 BOT EN PRODUCCIÓN (WEBHOOK)");
-      console.log("🌐 Webhook URL:", domain);
-    } else {
-      await bot.launch();
-      console.log("🤖 BOT EN LOCAL (POLLING)");
-    }
-  } catch (err) {
-    console.error("❌ Error iniciando bot:", err);
-  }
-})();
-
+  app.listen(PORT, () => {
+    console.log("🚀 BOT EN PRODUCCIÓN (WEBHOOK)");
+    console.log("🌐 Webhook:", WEBHOOK_URL);
+  });
+}
 
 /******************************************************************
- * 🌐 EXPRESS — SOLO TEST
+ * 🧪 LOCAL (POLLING)
  ******************************************************************/
-const app = express();
+if (!process.env.RENDER) {
+  bot.launch();
+  console.log("🤖 BOT EN LOCAL (POLLING)");
+}
 
+/******************************************************************
+ * 🔎 PING DE PRUEBA
+ ******************************************************************/
 app.get("/ping", (req, res) => {
   console.log("📡 Ping recibido");
   res.send("pong");
 });
-
-const PORT = process.env.PORT || 3001;
-
-app.listen(PORT, () => {
-  console.log(`🌐 SERVIDOR EXPRESS ACTIVO EN PUERTO ${PORT}`);
-});
-
