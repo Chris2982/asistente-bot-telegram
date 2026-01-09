@@ -142,12 +142,28 @@ bot.on("text", async (ctx) => {
  ******************************************************************/
 (async () => {
   try {
-    await bot.launch();
-    console.log("🤖 BOT DE TELEGRAM LISTO PARA USARSE");
+    const isProduction = process.env.RENDER === "true";
+
+    if (isProduction) {
+      const domain = process.env.RENDER_EXTERNAL_URL;
+
+      await bot.launch({
+        webhook: {
+          domain
+        }
+      });
+
+      console.log("🚀 BOT EN PRODUCCIÓN (WEBHOOK)");
+      console.log("🌐 Webhook URL:", domain);
+    } else {
+      await bot.launch();
+      console.log("🤖 BOT EN LOCAL (POLLING)");
+    }
   } catch (err) {
     console.error("❌ Error iniciando bot:", err);
   }
 })();
+
 
 /******************************************************************
  * 🌐 EXPRESS — SOLO TEST
