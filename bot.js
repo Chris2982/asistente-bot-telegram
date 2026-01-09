@@ -15,14 +15,15 @@ const DEEPSEEK_API_KEY = process.env.DEEPSEEK_API_KEY;
 const DF_PROJECT_ID = process.env.DF_PROJECT_ID;
 const PORT = process.env.PORT || 3001;
 
-if (!TELEGRAM_TOKEN) console.error("❌ FALTA TELEGRAM_TOKEN");
-if (!DEEPSEEK_API_KEY) console.error("❌ FALTA DEEPSEEK_API_KEY");
-if (!DF_PROJECT_ID) console.error("❌ FALTA DF_PROJECT_ID");
+if (!TELEGRAM_TOKEN) throw new Error("❌ FALTA TELEGRAM_TOKEN");
+if (!DEEPSEEK_API_KEY) throw new Error("❌ FALTA DEEPSEEK_API_KEY");
+if (!DF_PROJECT_ID) throw new Error("❌ FALTA DF_PROJECT_ID");
 
 /******************************************************************
  * 🌐 APP EXPRESS
  ******************************************************************/
-const app = express(); // ❌ NO usamos express.json() global
+const app = express();
+app.use(express.json()); // ⚠️ OBLIGATORIO PARA WEBHOOK
 
 /******************************************************************
  * 🤖 BOT TELEGRAM
@@ -35,7 +36,7 @@ const bot = new Telegraf(TELEGRAM_TOKEN);
 const dfClient = new dialogflow.SessionsClient();
 
 /******************************************************************
- * 🧠 DETECTAR INTENCIÓN (DIALOGFLOW)
+ * 🧠 DETECTAR INTENCIÓN
  ******************************************************************/
 async function detectIntent(text, sessionId) {
   try {
@@ -55,18 +56,15 @@ async function detectIntent(text, sessionId) {
     };
 
     const [response] = await dfClient.detectIntent(request);
-    return (
-      response.queryResult.intent?.displayName ||
-      "Default Fallback Intent"
-    );
-  } catch (error) {
-    console.error("❌ Error Dialogflow:", error);
+    return response.queryResult.intent?.displayName || "Default Fallback Intent";
+  } catch (err) {
+    console.error("❌ Error Dialogflow:", err);
     return "Default Fallback Intent";
   }
 }
 
 /******************************************************************
- * 🤖 IA (DEEPSEEK) — SOLO FALLBACK
+ * 🤖 IA — FALLBACK
  ******************************************************************/
 async function askDeepSeek(text) {
   try {
@@ -96,42 +94,33 @@ async function askDeepSeek(text) {
 
     const data = await response.json();
     return data.choices?.[0]?.message?.content || "No pude responder.";
-  } catch (error) {
-    console.error("❌ Error IA:", error);
-    return "⚠ Error con la IA.";
+  } catch (err) {
+    console.error("❌ Error IA:", err);
+    return "⚠️ Error con la IA.";
   }
 }
 
 /******************************************************************
- * /start
+ * COMANDOS
  ******************************************************************/
 bot.start((ctx) => {
   ctx.reply(`¡Hola ${ctx.from.first_name}! 👋`);
   ctx.reply("Escribe tu consulta 🙂");
 });
 
-/******************************************************************
- * MENSAJES DE TEXTO
- ******************************************************************/
 bot.on("text", async (ctx) => {
   const text = ctx.message.text;
-  if (text.startsWith("/")) return;
-
-  console.log("📩 MENSAJE TELEGRAM:", text);
+  console.log("📩 MENSAJE:", text);
 
   const intent = await detectIntent(text, ctx.from.id);
-  console.log("🎯 INTENCIÓN DETECTADA:", intent);
+  console.log("🎯 INTENCIÓN:", intent);
 
   if (intent === "info") {
-    return ctx.reply(
-      "ℹ️ Brindamos información general sobre nuestros servicios."
-    );
+    return ctx.reply("ℹ️ Brindamos información general sobre nuestros servicios.");
   }
 
   if (intent === "support") {
-    return ctx.reply(
-      "🛠️ Soporte técnico: soporte@tudominio.com"
-    );
+    return ctx.reply("🛠️ Soporte técnico: soporte@tudominio.com");
   }
 
   const aiReply = await askDeepSeek(text);
@@ -139,39 +128,27 @@ bot.on("text", async (ctx) => {
 });
 
 /******************************************************************
- * 🚀 PRODUCCIÓN — WEBHOOK (RENDER)
+ * 🔁 WEBHOOK (RENDER)
  ******************************************************************/
-if (process.env.RENDER) {
-  const WEBHOOK_PATH = "/telegram";
-  const WEBHOOK_URL = `${process.env.RENDER_EXTERNAL_URL}${WEBHOOK_PATH}`;
+const WEBHOOK_PATH = "/telegram";
+const WEBHOOK_URL = `${process.env.RENDER_EXTERNAL_URL}${WEBHOOK_PATH}`;
 
-  // ✅ JSON SOLO PARA EL WEBHOOK
-  app.use(WEBHOOK_PATH, express.json());
-  app.use(WEBHOOK_PATH, bot.webhookCallback(WEBHOOK_PATH));
+app.post(WEBHOOK_PATH, bot.webhookCallback(WEBHOOK_PATH));
 
-  bot.telegram.setWebhook(WEBHOOK_URL);
-
-  app.listen(PORT, () => {
-    console.log("🚀 BOT EN PRODUCCIÓN (WEBHOOK)");
-    console.log("🌐 Webhook:", WEBHOOK_URL);
-  });
-}
+bot.telegram.setWebhook(WEBHOOK_URL).then(() => {
+  console.log("🚀 WEBHOOK REGISTRADO:", WEBHOOK_URL);
+});
 
 /******************************************************************
- * 🧪 LOCAL — POLLING
- ******************************************************************/
-if (!process.env.RENDER) {
-  bot.launch();
-  app.listen(PORT, () => {
-    console.log("🤖 BOT EN LOCAL (POLLING)");
-    console.log(`🌐 Puerto ${PORT}`);
-  });
-}
-
-/******************************************************************
- * 🔎 PING DE PRUEBA
+ * 🔎 PING
  ******************************************************************/
 app.get("/ping", (req, res) => {
-  console.log("📡 Ping recibido");
   res.send("pong");
+});
+
+/******************************************************************
+ * 🚀 INICIAR SERVIDOR
+ ******************************************************************/
+app.listen(PORT, () => {
+  console.log(`🌐 SERVIDOR ACTIVO EN PUERTO ${PORT}`);
 });
