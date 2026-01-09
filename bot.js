@@ -22,8 +22,7 @@ if (!DF_PROJECT_ID) console.error("❌ FALTA DF_PROJECT_ID");
 /******************************************************************
  * 🌐 APP EXPRESS
  ******************************************************************/
-const app = express();
-app.use(express.json());
+const app = express(); // ❌ NO usamos express.json() global
 
 /******************************************************************
  * 🤖 BOT TELEGRAM
@@ -56,7 +55,10 @@ async function detectIntent(text, sessionId) {
     };
 
     const [response] = await dfClient.detectIntent(request);
-    return response.queryResult.intent?.displayName || "Default Fallback Intent";
+    return (
+      response.queryResult.intent?.displayName ||
+      "Default Fallback Intent"
+    );
   } catch (error) {
     console.error("❌ Error Dialogflow:", error);
     return "Default Fallback Intent";
@@ -121,11 +123,15 @@ bot.on("text", async (ctx) => {
   console.log("🎯 INTENCIÓN DETECTADA:", intent);
 
   if (intent === "info") {
-    return ctx.reply("ℹ️ Brindamos información general sobre nuestros servicios.");
+    return ctx.reply(
+      "ℹ️ Brindamos información general sobre nuestros servicios."
+    );
   }
 
   if (intent === "support") {
-    return ctx.reply("🛠️ Soporte técnico: soporte@tudominio.com");
+    return ctx.reply(
+      "🛠️ Soporte técnico: soporte@tudominio.com"
+    );
   }
 
   const aiReply = await askDeepSeek(text);
@@ -133,12 +139,14 @@ bot.on("text", async (ctx) => {
 });
 
 /******************************************************************
- * 🔁 WEBHOOK PARA PRODUCCIÓN (RENDER)
+ * 🚀 PRODUCCIÓN — WEBHOOK (RENDER)
  ******************************************************************/
 if (process.env.RENDER) {
   const WEBHOOK_PATH = "/telegram";
   const WEBHOOK_URL = `${process.env.RENDER_EXTERNAL_URL}${WEBHOOK_PATH}`;
 
+  // ✅ JSON SOLO PARA EL WEBHOOK
+  app.use(WEBHOOK_PATH, express.json());
   app.use(WEBHOOK_PATH, bot.webhookCallback(WEBHOOK_PATH));
 
   bot.telegram.setWebhook(WEBHOOK_URL);
@@ -150,11 +158,14 @@ if (process.env.RENDER) {
 }
 
 /******************************************************************
- * 🧪 LOCAL (POLLING)
+ * 🧪 LOCAL — POLLING
  ******************************************************************/
 if (!process.env.RENDER) {
   bot.launch();
-  console.log("🤖 BOT EN LOCAL (POLLING)");
+  app.listen(PORT, () => {
+    console.log("🤖 BOT EN LOCAL (POLLING)");
+    console.log(`🌐 Puerto ${PORT}`);
+  });
 }
 
 /******************************************************************
