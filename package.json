@@ -1,6 +1,7 @@
 {
   "name": "asistente-bot",
   "version": "1.0.0",
+  "type": "module",
   "main": "bot.js",
   "dependencies": {
     "@google-cloud/dialogflow": "^7.4.0",
