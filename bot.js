@@ -133,7 +133,7 @@ bot.on("text", async (ctx) => {
     );
   }
 
-  if (intent === "solicitud") {
+  if (intent === "Solicitud") {
     return ctx.reply(
       "📋 Hemos recibido tu solicitud.\n" +
       "Un representante del negocio se comunicará contigo en breve."
