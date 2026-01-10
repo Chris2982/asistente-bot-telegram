@@ -110,19 +110,37 @@ bot.start((ctx) => {
 
 bot.on("text", async (ctx) => {
   const text = ctx.message.text;
+
+  // Ignorar comandos
+  if (text.startsWith("/")) return;
+
   console.log("📩 MENSAJE:", text);
 
+  // 1️⃣ Detectar intención con Dialogflow
   const intent = await detectIntent(text, ctx.from.id);
   console.log("🎯 INTENCIÓN:", intent);
 
+  // 2️⃣ Respuestas controladas (flujos de negocio)
   if (intent === "info") {
-    return ctx.reply("ℹ️ Brindamos información general sobre nuestros servicios.");
+    return ctx.reply(
+      "ℹ️ Brindamos información general sobre nuestros servicios."
+    );
   }
 
   if (intent === "support") {
-    return ctx.reply("🛠️ Soporte técnico: soporte@tudominio.com");
+    return ctx.reply(
+      "🛠️ Soporte técnico: soporte@tudominio.com"
+    );
   }
 
+  if (intent === "solicitud") {
+    return ctx.reply(
+      "📋 Hemos recibido tu solicitud.\n" +
+      "Un representante del negocio se comunicará contigo en breve."
+    );
+  }
+
+  // 3️⃣ Fallback → IA (solo si no hay intención clara)
   const aiReply = await askDeepSeek(text);
   return ctx.reply(aiReply);
 });
