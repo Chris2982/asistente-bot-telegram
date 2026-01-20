@@ -23,12 +23,17 @@ if (!DF_PROJECT_ID) throw new Error("❌ FALTA DF_PROJECT_ID");
  * 🌐 APP EXPRESS
  ******************************************************************/
 const app = express();
-app.use(express.json()); // ⚠️ OBLIGATORIO PARA WEBHOOK
+app.use(express.json());
 
 /******************************************************************
  * 🤖 BOT TELEGRAM
  ******************************************************************/
 const bot = new Telegraf(TELEGRAM_TOKEN);
+
+/******************************************************************
+ * 🧠 MEMORIA EN RAM (FLUJOS)
+ ******************************************************************/
+const userState = {};
 
 /******************************************************************
  * 🤖 CLIENTE DIALOGFLOW
@@ -56,15 +61,15 @@ async function detectIntent(text, sessionId) {
     };
 
     const [response] = await dfClient.detectIntent(request);
-    return response.queryResult.intent?.displayName || "Default Fallback Intent";
+    return response.queryResult.intent?.displayName || "fallback";
   } catch (err) {
-    console.error("❌ Error Dialogflow:", err);
-    return "Default Fallback Intent";
+    console.error("❌ Dialogflow:", err);
+    return "fallback";
   }
 }
 
 /******************************************************************
- * 🤖 IA — FALLBACK
+ * 🤖 IA (SOLO FALLBACK)
  ******************************************************************/
 async function askDeepSeek(text) {
   try {
@@ -95,52 +100,92 @@ async function askDeepSeek(text) {
     const data = await response.json();
     return data.choices?.[0]?.message?.content || "No pude responder.";
   } catch (err) {
-    console.error("❌ Error IA:", err);
+    console.error("❌ IA:", err);
     return "⚠️ Error con la IA.";
   }
 }
 
 /******************************************************************
- * COMANDOS
+ * /start
  ******************************************************************/
 bot.start((ctx) => {
   ctx.reply(`¡Hola ${ctx.from.first_name}! 👋`);
-  ctx.reply("Escribe tu consulta 🙂");
+  ctx.reply("¿En qué puedo ayudarte?");
 });
 
+/******************************************************************
+ * MENSAJES
+ ******************************************************************/
 bot.on("text", async (ctx) => {
   const text = ctx.message.text;
+  const userId = ctx.from.id;
 
-  // Ignorar comandos
   if (text.startsWith("/")) return;
 
   console.log("📩 MENSAJE:", text);
 
-  // 1️⃣ Detectar intención con Dialogflow
-  const intent = await detectIntent(text, ctx.from.id);
-  console.log("🎯 INTENCIÓN:", intent);
+  /**************************************************************
+   * 🔁 USUARIO EN FLUJO ACTIVO (NO SE DETECTA INTENT)
+   **************************************************************/
+  if (userState[userId]) {
+    const estado = userState[userId];
 
-  // 2️⃣ Respuestas controladas (flujos de negocio)
+    // PASO 1: servicio
+    if (estado.paso === "servicio") {
+      estado.datos.servicio = text;
+      estado.paso = "fecha";
+
+      return ctx.reply("📅 ¿Para qué fecha necesitas el servicio?");
+    }
+
+    // PASO 2: fecha
+    if (estado.paso === "fecha") {
+      estado.datos.fecha = text;
+
+      await ctx.reply(
+        "✅ Solicitud registrada:\n" +
+        `🛠️ Servicio: ${estado.datos.servicio}\n` +
+        `📅 Fecha: ${estado.datos.fecha}\n\n` +
+        "Un representante del negocio se comunicará contigo."
+      );
+
+      console.log("📦 SOLICITUD FINAL:", estado.datos);
+      delete userState[userId];
+      return;
+    }
+  }
+
+  /**************************************************************
+   * 🧠 DETECTAR INTENCIÓN (SOLO SI NO HAY FLUJO)
+   **************************************************************/
+  const rawIntent = await detectIntent(text, userId);
+  const intent = rawIntent.toLowerCase();
+
+  console.log("🎯 INTENCIÓN:", rawIntent);
+
+  /**************************************************************
+   * 🚀 INICIAR FLUJO DE SOLICITUD
+   **************************************************************/
+  if (intent.includes("solicitud")) {
+    userState[userId] = {
+      paso: "servicio",
+      datos: {}
+    };
+
+    return ctx.reply("📋 Perfecto.\n🛠️ ¿Qué servicio necesitas?");
+  }
+
   if (intent === "info") {
-    return ctx.reply(
-      "ℹ️ Brindamos información general sobre nuestros servicios."
-    );
+    return ctx.reply("ℹ️ Brindamos información general sobre nuestros servicios.");
   }
 
   if (intent === "support") {
-    return ctx.reply(
-      "🛠️ Soporte técnico: soporte@tudominio.com"
-    );
+    return ctx.reply("🛠️ Soporte técnico: soporte@tudominio.com");
   }
 
-  if (intent === "Solicitud") {
-    return ctx.reply(
-      "📋 Hemos recibido tu solicitud.\n" +
-      "Un representante del negocio se comunicará contigo en breve."
-    );
-  }
-
-  // 3️⃣ Fallback → IA (solo si no hay intención clara)
+  /**************************************************************
+   * 🤖 FALLBACK IA
+   **************************************************************/
   const aiReply = await askDeepSeek(text);
   return ctx.reply(aiReply);
 });
@@ -154,7 +199,7 @@ const WEBHOOK_URL = `${process.env.RENDER_EXTERNAL_URL}${WEBHOOK_PATH}`;
 app.post(WEBHOOK_PATH, bot.webhookCallback(WEBHOOK_PATH));
 
 bot.telegram.setWebhook(WEBHOOK_URL).then(() => {
-  console.log("🚀 WEBHOOK REGISTRADO:", WEBHOOK_URL);
+  console.log("🚀 Webhook activo:", WEBHOOK_URL);
 });
 
 /******************************************************************
@@ -168,5 +213,5 @@ app.get("/ping", (req, res) => {
  * 🚀 INICIAR SERVIDOR
  ******************************************************************/
 app.listen(PORT, () => {
-  console.log(`🌐 SERVIDOR ACTIVO EN PUERTO ${PORT}`);
+  console.log(`🌐 Servidor activo en puerto ${PORT}`);
 });
