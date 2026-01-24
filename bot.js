@@ -1,13 +1,15 @@
 /******************************************************************
  * 🔥 CARGA DE VARIABLES DE ENTORNO
  ******************************************************************/
-import "dotenv/config";                 // Carga las variables del archivo .env
-import express from "express";          // Servidor web
-import { Telegraf } from "telegraf";    // Librería de Telegram
-import fetch from "node-fetch";         // Para llamadas HTTP a la IA
-import dialogflow from "@google-cloud/dialogflow"; // Dialogflow
-import pkg from "pg";                    // PostgreSQL
-const { Pool } = pkg;                    // Pool de conexiones PostgreSQL
+import "dotenv/config"; // Carga variables de .env
+import express from "express";
+import { Telegraf } from "telegraf";
+import fetch from "node-fetch";
+import dialogflow from "@google-cloud/dialogflow";
+import pkg from "pg";
+import { stringify } from "csv-stringify/sync"; // Para generar CSV de reportes
+
+const { Pool } = pkg;
 
 /******************************************************************
  * ⚙️ VARIABLES DE ENTORNO
@@ -16,23 +18,26 @@ const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN;
 const DEEPSEEK_API_KEY = process.env.DEEPSEEK_API_KEY;
 const DF_PROJECT_ID = process.env.DF_PROJECT_ID;
 const PORT = process.env.PORT || 3001;
+const DATABASE_URL = process.env.DATABASE_URL; // Postgres URL de Render
 
 if (!TELEGRAM_TOKEN) throw new Error("❌ FALTA TELEGRAM_TOKEN");
 if (!DEEPSEEK_API_KEY) throw new Error("❌ FALTA DEEPSEEK_API_KEY");
 if (!DF_PROJECT_ID) throw new Error("❌ FALTA DF_PROJECT_ID");
+if (!DATABASE_URL) throw new Error("❌ FALTA DATABASE_URL");
 
 /******************************************************************
- * 🗄️ CONEXIÓN POSTGRESQL (RENDER)
+ * 🗄️ CONEXIÓN POSTGRESQL
  ******************************************************************/
 const db = new Pool({
-  connectionString: process.env.DATABASE_URL, // URL de la base de datos de Render
-  ssl: { rejectUnauthorized: false },         // SSL necesario en Render
+  connectionString: DATABASE_URL,
+  ssl: { rejectUnauthorized: false },
 });
 
 /******************************************************************
- * ✅ CREAR TABLA AUTOMÁTICAMENTE
+ * ✅ CREAR TABLAS AUTOMÁTICAMENTE
  ******************************************************************/
 async function initDB() {
+  // Tabla de solicitudes
   await db.query(`
     CREATE TABLE IF NOT EXISTS solicitudes (
       id SERIAL PRIMARY KEY,
@@ -43,7 +48,18 @@ async function initDB() {
     );
   `);
 
-  console.log("✅ Tabla 'solicitudes' verificada");
+  // Tabla para guardar interacciones (mensajes/respuestas)
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS interacciones (
+      id SERIAL PRIMARY KEY,
+      user_id BIGINT,
+      mensaje TEXT,
+      respuesta TEXT,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+  `);
+
+  console.log("✅ Tablas 'solicitudes' e 'interacciones' verificadas");
 }
 
 /******************************************************************
@@ -58,9 +74,9 @@ app.use(express.json());
 const bot = new Telegraf(TELEGRAM_TOKEN);
 
 /******************************************************************
- * 🧠 MEMORIA EN RAM (FLUJOS POR USUARIO)
+ * 🧠 MEMORIA EN RAM (FLUJOS)
  ******************************************************************/
-const userState = {}; // Guarda paso actual y datos del usuario mientras está en flujo
+const userState = {}; // Para guardar paso actual de cada usuario
 
 /******************************************************************
  * 🤖 CLIENTE DIALOGFLOW
@@ -68,7 +84,7 @@ const userState = {}; // Guarda paso actual y datos del usuario mientras está e
 const dfClient = new dialogflow.SessionsClient();
 
 /******************************************************************
- * 🧠 DETECTAR INTENCIÓN CON DIALOGFLOW
+ * 🧠 DETECTAR INTENCIÓN
  ******************************************************************/
 async function detectIntent(text, sessionId) {
   try {
@@ -79,9 +95,7 @@ async function detectIntent(text, sessionId) {
 
     const request = {
       session: sessionPath,
-      queryInput: {
-        text: { text, languageCode: "es" },
-      },
+      queryInput: { text: { text, languageCode: "es" } },
     };
 
     const [response] = await dfClient.detectIntent(request);
@@ -93,7 +107,7 @@ async function detectIntent(text, sessionId) {
 }
 
 /******************************************************************
- * 🤖 FALLBACK IA CON DEEPSEEK
+ * 🤖 IA (SOLO FALLBACK)
  ******************************************************************/
 async function askDeepSeek(text) {
   try {
@@ -141,85 +155,113 @@ bot.start((ctx) => {
  * MENSAJES
  ******************************************************************/
 bot.on("text", async (ctx) => {
-  const text = ctx.message.text.toLowerCase(); // minúsculas para comparar
+  const text = ctx.message.text;
   const userId = ctx.from.id;
 
-  if (text.startsWith("/")) return; // Ignorar comandos slash
+  if (text.startsWith("/")) return;
 
   console.log("📩 MENSAJE:", text);
 
-  // 🔁 Usuario en flujo activo
+  /**************************************************************
+   * 🔁 FLUJO DE REGISTRO DE SOLICITUD
+   **************************************************************/
   if (userState[userId]) {
     const estado = userState[userId];
 
-    // PASO 1: Servicio
     if (estado.paso === "servicio") {
-      estado.datos.servicio = ctx.message.text;
+      estado.datos.servicio = text;
       estado.paso = "fecha";
       return ctx.reply("📅 ¿Para qué fecha necesitas el servicio?");
     }
 
-    // PASO 2: Fecha
     if (estado.paso === "fecha") {
-      estado.datos.fecha = ctx.message.text;
+      estado.datos.fecha = text;
 
+      // Guardar en solicitudes
       await db.query(
         "INSERT INTO solicitudes (user_id, servicio, fecha) VALUES ($1, $2, $3)",
         [userId, estado.datos.servicio, estado.datos.fecha]
       );
 
-      await ctx.reply(
-        "✅ Solicitud registrada:\n" +
-        `🛠️ Servicio: ${estado.datos.servicio}\n` +
-        `📅 Fecha: ${estado.datos.fecha}\n\n` +
-        "Un representante del negocio se comunicará contigo."
+      const mensaje = `✅ Solicitud registrada:\n🛠️ Servicio: ${estado.datos.servicio}\n📅 Fecha: ${estado.datos.fecha}\n\nUn representante se comunicará contigo.`;
+
+      // Guardar interacción
+      await db.query(
+        "INSERT INTO interacciones (user_id, mensaje, respuesta) VALUES ($1, $2, $3)",
+        [userId, text, mensaje]
       );
 
+      await ctx.reply(mensaje);
       console.log("📦 SOLICITUD GUARDADA:", estado.datos);
       delete userState[userId];
       return;
     }
   }
 
-  // 🚀 Comandos directos
-  if (text.includes("solicitud")) {
+  /**************************************************************
+   * 🧠 DETECTAR INTENCIÓN
+   **************************************************************/
+  const rawIntent = await detectIntent(text, userId);
+  const intent = rawIntent.toLowerCase();
+  console.log("🎯 INTENCIÓN:", rawIntent);
+
+  /**************************************************************
+   * 🚀 INICIAR SOLICITUD
+   **************************************************************/
+  if (rawIntent === "Solicitud") {
     userState[userId] = { paso: "servicio", datos: {} };
     return ctx.reply("📋 Perfecto.\n🛠️ ¿Qué servicio necesitas?");
   }
 
-  // 📋 Consultar últimas solicitudes
-  if (text.includes("consultar solicitudes")) {
-    const result = await db.query(
-      "SELECT id, servicio, fecha, created_at FROM solicitudes ORDER BY id DESC LIMIT 10"
-    );
-
-    if (result.rows.length === 0) {
-      return ctx.reply("📭 No hay solicitudes registradas.");
-    }
-
-    let mensaje = "📋 Últimas solicitudes:\n\n";
-    result.rows.forEach((row) => {
-      mensaje += `🆔 ${row.id}\n🛠️ ${row.servicio}\n📅 ${row.fecha}\n🕒 ${row.created_at}\n\n`;
-    });
-
-    return ctx.reply(mensaje);
-  }
-
-  // 📝 Comando Reporte: genera CSV y envía documento
-  if (text.includes("reporte")) {
+  /**************************************************************
+   * 📋 CONSULTAR SOLICITUDES (TOP 5)
+   **************************************************************/
+  if (rawIntent === "ConsultarSolicitudes") {
     try {
       const result = await db.query(
-        "SELECT id, user_id, servicio, fecha, created_at FROM solicitudes ORDER BY id DESC"
+        "SELECT servicio, fecha FROM solicitudes ORDER BY id DESC LIMIT 5"
       );
 
       if (result.rows.length === 0) {
-        return ctx.reply("📭 No hay solicitudes para generar el reporte.");
+        return ctx.reply("📭 No hay solicitudes registradas aún.");
       }
 
-      // Generar CSV en memoria
-      const { stringify } = await import("csv-stringify/sync");
-      const csv = stringify(result.rows, { header: true });
+      let mensaje = "📋 Últimas solicitudes registradas:\n\n";
+      result.rows.forEach((row, index) => {
+        mensaje += `${index + 1}️⃣ ${row.servicio} - ${row.fecha}\n`;
+      });
 
+      return ctx.reply(mensaje);
+    } catch (error) {
+      console.error("❌ Error consultando solicitudes:", error);
+      return ctx.reply("⚠️ Error al consultar las solicitudes.");
+    }
+  }
+
+  /**************************************************************
+   * 📊 GENERAR REPORTE CSV (ADMIN)
+   **************************************************************/
+  if (intent.includes("reporte")) {
+    try {
+      const result = await db.query(
+        "SELECT user_id, servicio, fecha, created_at FROM solicitudes ORDER BY id DESC"
+      );
+
+      if (result.rows.length === 0) {
+        return ctx.reply("📭 No hay solicitudes para generar reporte.");
+      }
+
+      const csv = stringify(result.rows, {
+        header: true,
+        columns: {
+          user_id: "Usuario",
+          servicio: "Servicio",
+          fecha: "Fecha",
+          created_at: "Creado en",
+        },
+      });
+
+      // Enviar CSV como archivo
       await ctx.replyWithDocument({
         source: Buffer.from(csv),
         filename: "reporte_solicitudes.csv",
@@ -228,22 +270,29 @@ bot.on("text", async (ctx) => {
       return;
     } catch (error) {
       console.error("❌ Error generando reporte:", error);
-      return ctx.reply("⚠️ Ocurrió un error al generar el reporte.");
+      return ctx.reply("⚠️ Error al generar reporte.");
     }
   }
 
-  // Info general
-  if (text.includes("info")) {
+  if (intent === "info") {
     return ctx.reply("ℹ️ Brindamos información general sobre nuestros servicios.");
   }
 
-  // Soporte técnico
-  if (text.includes("soporte")) {
+  if (intent === "support") {
     return ctx.reply("🛠️ Soporte técnico: soporte@tudominio.com");
   }
 
-  // Fallback IA
-  const aiReply = await askDeepSeek(ctx.message.text);
+  /**************************************************************
+   * 🤖 FALLBACK IA
+   **************************************************************/
+  const aiReply = await askDeepSeek(text);
+
+  // Guardar interacción de fallback
+  await db.query(
+    "INSERT INTO interacciones (user_id, mensaje, respuesta) VALUES ($1, $2, $3)",
+    [userId, text, aiReply]
+  );
+
   return ctx.reply(aiReply);
 });
 
@@ -252,14 +301,13 @@ bot.on("text", async (ctx) => {
  ******************************************************************/
 const WEBHOOK_PATH = "/telegram";
 const WEBHOOK_URL = `${process.env.RENDER_EXTERNAL_URL}${WEBHOOK_PATH}`;
-
 app.post(WEBHOOK_PATH, bot.webhookCallback(WEBHOOK_PATH));
 
 /******************************************************************
- * 🚀 INICIAR TODO EN ORDEN
+ * 🚀 INICIAR SERVIDOR Y TABLAS
  ******************************************************************/
 async function start() {
-  await initDB(); // Crea tabla si no existe
+  await initDB(); // Crea tablas automáticamente
 
   bot.telegram.setWebhook(WEBHOOK_URL).then(() => {
     console.log("🚀 Webhook activo:", WEBHOOK_URL);
