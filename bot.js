@@ -223,6 +223,25 @@ if (rawIntent === "ConsultarSolicitudes") {
     return ctx.reply("🛠️ Soporte técnico: soporte@tudominio.com");
   }
 
+  // 📋 VER TODAS LAS SOLICITUDES (ADMIN)
+if (intent.toLowerCase().includes("consultarsolicitudes")) {
+  const result = await db.query(
+    "SELECT id, servicio, fecha, created_at FROM solicitudes ORDER BY id DESC LIMIT 10"
+  );
+
+  if (result.rows.length === 0) {
+    return ctx.reply("📭 No hay solicitudes registradas.");
+  }
+
+  let mensaje = "📋 Últimas solicitudes:\n\n";
+
+  result.rows.forEach((row) => {
+    mensaje += `🆔 ${row.id}\n🛠️ ${row.servicio}\n📅 ${row.fecha}\n🕒 ${row.created_at}\n\n`;
+  });
+
+  return ctx.reply(mensaje);
+}
+
   const aiReply = await askDeepSeek(text);
   return ctx.reply(aiReply);
 });
