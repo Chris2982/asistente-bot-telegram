@@ -43,6 +43,7 @@ async function initDB() {
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
   `);
+
   console.log("✅ Tabla 'solicitudes' verificada");
 }
 
@@ -63,6 +64,11 @@ const bot = new Telegraf(TELEGRAM_TOKEN);
 const userState = {};
 
 /******************************************************************
+ * 👮 ADMIN LIST
+ ******************************************************************/
+const admins = [574970226]; // <-- Agrega aquí los IDs de Telegram que pueden ver reportes completos
+
+/******************************************************************
  * 🤖 CLIENTE DIALOGFLOW
  ******************************************************************/
 const dfClient = new dialogflow.SessionsClient();
@@ -79,9 +85,7 @@ async function detectIntent(text, sessionId) {
 
     const request = {
       session: sessionPath,
-      queryInput: {
-        text: { text, languageCode: "es" },
-      },
+      queryInput: { text: { text, languageCode: "es" } },
     };
 
     const [response] = await dfClient.detectIntent(request);
@@ -138,11 +142,6 @@ bot.start((ctx) => {
 });
 
 /******************************************************************
- * 👥 Lista de admins (solo ellos pueden ver reportes completos)
- ******************************************************************/
-const admins = [574970226]; // <-- coloca aquí los IDs de Telegram de los admins
-
-/******************************************************************
  * MENSAJES
  ******************************************************************/
 bot.on("text", async (ctx) => {
@@ -150,9 +149,12 @@ bot.on("text", async (ctx) => {
   const userId = ctx.from.id;
 
   if (text.startsWith("/")) return;
+
   console.log("📩 MENSAJE:", text);
 
-  // 🔁 Flujo de solicitud
+  /**************************************************************
+   * 🔁 USUARIO EN FLUJO ACTIVO
+   **************************************************************/
   if (userState[userId]) {
     const estado = userState[userId];
 
@@ -165,6 +167,7 @@ bot.on("text", async (ctx) => {
     if (estado.paso === "fecha") {
       estado.datos.fecha = text;
 
+      // 💾 GUARDAR EN POSTGRESQL
       await db.query(
         "INSERT INTO solicitudes (user_id, servicio, fecha) VALUES ($1, $2, $3)",
         [userId, estado.datos.servicio, estado.datos.fecha]
@@ -183,33 +186,62 @@ bot.on("text", async (ctx) => {
     }
   }
 
-  // 🔎 Detectar intención
+  /**************************************************************
+   * 🧠 DETECTAR INTENCIÓN
+   **************************************************************/
   const rawIntent = await detectIntent(text, userId);
   const intent = rawIntent.toLowerCase();
+
   console.log("🎯 INTENCIÓN:", rawIntent);
 
-  // 🚀 Inicio flujo solicitud
+  /**************************************************************
+   * 🚀 INICIAR FLUJO DE SOLICITUD
+   **************************************************************/
   if (rawIntent === "Solicitud") {
     userState[userId] = { paso: "servicio", datos: {} };
     return ctx.reply("📋 Perfecto.\n🛠️ ¿Qué servicio necesitas?");
   }
 
-  // 📋 Consultar últimas solicitudes (para admins)
+  /**************************************************************
+   * 📋 CONSULTAR SOLICITUDES FILTRABLES (ADMIN)
+   **************************************************************/
   if (rawIntent === "ConsultarSolicitudes") {
     if (!admins.includes(userId)) {
       return ctx.reply("⚠️ No tienes permisos para ver reportes completos.");
     }
 
+    // Filtrado opcional: "servicio=Imprenta fecha=2026-01-29"
+    const filtroServicio = text.match(/servicio=(\w+)/i)?.[1];
+    const filtroFecha = text.match(/fecha=([\d-]+)/)?.[1];
+
+    let query = "SELECT id, servicio, fecha, created_at FROM solicitudes";
+    let conditions = [];
+    let params = [];
+
+    if (filtroServicio) {
+      params.push(filtroServicio);
+      conditions.push(`servicio = $${params.length}`);
+    }
+
+    if (filtroFecha) {
+      params.push(filtroFecha);
+      conditions.push(`fecha = $${params.length}`);
+    }
+
+    if (conditions.length > 0) {
+      query += " WHERE " + conditions.join(" AND ");
+    }
+
+    query += " ORDER BY id DESC LIMIT 10";
+
     try {
-      const result = await db.query(
-        "SELECT id, servicio, fecha, created_at FROM solicitudes ORDER BY id DESC LIMIT 10"
-      );
+      const result = await db.query(query, params);
 
       if (result.rows.length === 0) {
-        return ctx.reply("📭 No hay solicitudes registradas.");
+        return ctx.reply("📭 No hay solicitudes con esos filtros.");
       }
 
-      let mensaje = "📋 Últimas solicitudes:\n\n";
+      let mensaje = "📋 Solicitudes encontradas:\n\n";
       result.rows.forEach((row) => {
         mensaje += `🆔 ${row.id}\n🛠️ ${row.servicio}\n📅 ${row.fecha}\n🕒 ${row.created_at}\n\n`;
       });
@@ -221,17 +253,22 @@ bot.on("text", async (ctx) => {
     }
   }
 
-  // ℹ️ Información general
+  /**************************************************************
+   * 🔹 INFO / SOPORTE
+   **************************************************************/
   if (intent === "info") {
-    return ctx.reply("ℹ️ Brindamos información general sobre nuestros servicios.");
+    return ctx.reply(
+      "ℹ️ Brindamos información general sobre nuestros servicios."
+    );
   }
 
-  // 🛠️ Soporte
   if (intent === "support") {
     return ctx.reply("🛠️ Soporte técnico: soporte@tudominio.com");
   }
 
-  // 🤖 Fallback IA
+  /**************************************************************
+   * 🤖 FALLBACK IA
+   **************************************************************/
   const aiReply = await askDeepSeek(text);
   return ctx.reply(aiReply);
 });
@@ -244,7 +281,7 @@ const WEBHOOK_URL = `${process.env.RENDER_EXTERNAL_URL}${WEBHOOK_PATH}`;
 app.post(WEBHOOK_PATH, bot.webhookCallback(WEBHOOK_PATH));
 
 /******************************************************************
- * 🚀 INICIAR TODO EN ORDEN
+ * 🚀 INICIAR TODO EN ORDEN (CLAVE)
  ******************************************************************/
 async function start() {
   await initDB(); // ⬅️ crea tabla primero
