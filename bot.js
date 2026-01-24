@@ -6,7 +6,9 @@ import express from "express";
 import { Telegraf } from "telegraf";
 import fetch from "node-fetch";
 import dialogflow from "@google-cloud/dialogflow";
-import mysql from "mysql2/promise"; // 👈 NUEVO
+import pkg from "pg";
+
+const { Pool } = pkg;
 
 /******************************************************************
  * ⚙️ VARIABLES DE ENTORNO
@@ -21,13 +23,11 @@ if (!DEEPSEEK_API_KEY) throw new Error("❌ FALTA DEEPSEEK_API_KEY");
 if (!DF_PROJECT_ID) throw new Error("❌ FALTA DF_PROJECT_ID");
 
 /******************************************************************
- * 🗄️ CONEXIÓN MYSQL
+ * 🗄️ CONEXIÓN POSTGRESQL (RENDER)
  ******************************************************************/
-const db = await mysql.createPool({
-  host: "localhost",
-  user: "root",
-  password: "",
-  database: "asistente_pyme",
+const db = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: { rejectUnauthorized: false },
 });
 
 /******************************************************************
@@ -64,10 +64,7 @@ async function detectIntent(text, sessionId) {
     const request = {
       session: sessionPath,
       queryInput: {
-        text: {
-          text,
-          languageCode: "es",
-        },
+        text: { text, languageCode: "es" },
       },
     };
 
@@ -135,27 +132,21 @@ bot.on("text", async (ctx) => {
 
   console.log("📩 MENSAJE:", text);
 
-  /**************************************************************
-   * 🔁 USUARIO EN FLUJO ACTIVO
-   **************************************************************/
   if (userState[userId]) {
     const estado = userState[userId];
 
-    // PASO 1: servicio
     if (estado.paso === "servicio") {
       estado.datos.servicio = text;
       estado.paso = "fecha";
-
       return ctx.reply("📅 ¿Para qué fecha necesitas el servicio?");
     }
 
-    // PASO 2: fecha
     if (estado.paso === "fecha") {
       estado.datos.fecha = text;
 
-      // 💾 GUARDAR EN MYSQL
-      await db.execute(
-        "INSERT INTO solicitudes (user_id, servicio, fecha) VALUES (?, ?, ?)",
+      // 💾 GUARDAR EN POSTGRESQL
+      await db.query(
+        "INSERT INTO solicitudes (user_id, servicio, fecha) VALUES ($1, $2, $3)",
         [userId, estado.datos.servicio, estado.datos.fecha]
       );
 
@@ -166,29 +157,19 @@ bot.on("text", async (ctx) => {
           "Un representante del negocio se comunicará contigo."
       );
 
-      console.log("📦 SOLICITUD GUARDADA EN MYSQL:", estado.datos);
+      console.log("📦 SOLICITUD GUARDADA:", estado.datos);
       delete userState[userId];
       return;
     }
   }
 
-  /**************************************************************
-   * 🧠 DETECTAR INTENCIÓN
-   **************************************************************/
   const rawIntent = await detectIntent(text, userId);
   const intent = rawIntent.toLowerCase();
 
   console.log("🎯 INTENCIÓN:", rawIntent);
 
-  /**************************************************************
-   * 🚀 INICIAR FLUJO DE SOLICITUD
-   **************************************************************/
   if (intent.includes("solicitud")) {
-    userState[userId] = {
-      paso: "servicio",
-      datos: {},
-    };
-
+    userState[userId] = { paso: "servicio", datos: {} };
     return ctx.reply("📋 Perfecto.\n🛠️ ¿Qué servicio necesitas?");
   }
 
@@ -202,9 +183,6 @@ bot.on("text", async (ctx) => {
     return ctx.reply("🛠️ Soporte técnico: soporte@tudominio.com");
   }
 
-  /**************************************************************
-   * 🤖 FALLBACK IA
-   **************************************************************/
   const aiReply = await askDeepSeek(text);
   return ctx.reply(aiReply);
 });
@@ -224,9 +202,7 @@ bot.telegram.setWebhook(WEBHOOK_URL).then(() => {
 /******************************************************************
  * 🔎 PING
  ******************************************************************/
-app.get("/ping", (req, res) => {
-  res.send("pong");
-});
+app.get("/ping", (req, res) => res.send("pong"));
 
 /******************************************************************
  * 🚀 INICIAR SERVIDOR
