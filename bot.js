@@ -189,6 +189,32 @@ bot.on("text", async (ctx) => {
     return ctx.reply("📋 Perfecto.\n🛠️ ¿Qué servicio necesitas?");
   }
 
+  /******************************************************************
+ * 📋 CONSULTAR SOLICITUDES GUARDADAS
+ ******************************************************************/
+if (intent.includes("consultarsolicitudes")) {
+  try {
+    const result = await db.query(
+      "SELECT servicio, fecha FROM solicitudes ORDER BY id DESC LIMIT 5"
+    );
+
+    if (result.rows.length === 0) {
+      return ctx.reply("📭 No hay solicitudes registradas aún.");
+    }
+
+    let mensaje = "📋 Últimas solicitudes registradas:\n\n";
+
+    result.rows.forEach((row, index) => {
+      mensaje += `${index + 1}️⃣ ${row.servicio} - ${row.fecha}\n`;
+    });
+
+    return ctx.reply(mensaje);
+  } catch (error) {
+    console.error("❌ Error consultando solicitudes:", error);
+    return ctx.reply("⚠️ Error al consultar las solicitudes.");
+  }
+}
+
   if (intent === "info") {
     return ctx.reply("ℹ️ Brindamos información general sobre nuestros servicios.");
   }
