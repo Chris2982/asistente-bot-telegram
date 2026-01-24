@@ -6,6 +6,7 @@ import express from "express";
 import { Telegraf } from "telegraf";
 import fetch from "node-fetch";
 import dialogflow from "@google-cloud/dialogflow";
+import mysql from "mysql2/promise"; // 👈 NUEVO
 
 /******************************************************************
  * ⚙️ VARIABLES DE ENTORNO
@@ -18,6 +19,16 @@ const PORT = process.env.PORT || 3001;
 if (!TELEGRAM_TOKEN) throw new Error("❌ FALTA TELEGRAM_TOKEN");
 if (!DEEPSEEK_API_KEY) throw new Error("❌ FALTA DEEPSEEK_API_KEY");
 if (!DF_PROJECT_ID) throw new Error("❌ FALTA DF_PROJECT_ID");
+
+/******************************************************************
+ * 🗄️ CONEXIÓN MYSQL
+ ******************************************************************/
+const db = await mysql.createPool({
+  host: "localhost",
+  user: "root",
+  password: "",
+  database: "asistente_pyme",
+});
 
 /******************************************************************
  * 🌐 APP EXPRESS
@@ -55,9 +66,9 @@ async function detectIntent(text, sessionId) {
       queryInput: {
         text: {
           text,
-          languageCode: "es"
-        }
-      }
+          languageCode: "es",
+        },
+      },
     };
 
     const [response] = await dfClient.detectIntent(request);
@@ -79,7 +90,7 @@ async function askDeepSeek(text) {
         method: "POST",
         headers: {
           Authorization: `Bearer ${DEEPSEEK_API_KEY}`,
-          "Content-Type": "application/json"
+          "Content-Type": "application/json",
         },
         body: JSON.stringify({
           model: "deepseek/deepseek-chat",
@@ -89,11 +100,11 @@ async function askDeepSeek(text) {
             {
               role: "system",
               content:
-                "Eres un asistente empresarial. Responde solo en español. Máximo 3 líneas."
+                "Eres un asistente empresarial. Responde solo en español. Máximo 3 líneas.",
             },
-            { role: "user", content: text }
-          ]
-        })
+            { role: "user", content: text },
+          ],
+        }),
       }
     );
 
@@ -125,7 +136,7 @@ bot.on("text", async (ctx) => {
   console.log("📩 MENSAJE:", text);
 
   /**************************************************************
-   * 🔁 USUARIO EN FLUJO ACTIVO (NO SE DETECTA INTENT)
+   * 🔁 USUARIO EN FLUJO ACTIVO
    **************************************************************/
   if (userState[userId]) {
     const estado = userState[userId];
@@ -142,21 +153,27 @@ bot.on("text", async (ctx) => {
     if (estado.paso === "fecha") {
       estado.datos.fecha = text;
 
-      await ctx.reply(
-        "✅ Solicitud registrada:\n" +
-        `🛠️ Servicio: ${estado.datos.servicio}\n` +
-        `📅 Fecha: ${estado.datos.fecha}\n\n` +
-        "Un representante del negocio se comunicará contigo."
+      // 💾 GUARDAR EN MYSQL
+      await db.execute(
+        "INSERT INTO solicitudes (user_id, servicio, fecha) VALUES (?, ?, ?)",
+        [userId, estado.datos.servicio, estado.datos.fecha]
       );
 
-      console.log("📦 SOLICITUD FINAL:", estado.datos);
+      await ctx.reply(
+        "✅ Solicitud registrada:\n" +
+          `🛠️ Servicio: ${estado.datos.servicio}\n` +
+          `📅 Fecha: ${estado.datos.fecha}\n\n` +
+          "Un representante del negocio se comunicará contigo."
+      );
+
+      console.log("📦 SOLICITUD GUARDADA EN MYSQL:", estado.datos);
       delete userState[userId];
       return;
     }
   }
 
   /**************************************************************
-   * 🧠 DETECTAR INTENCIÓN (SOLO SI NO HAY FLUJO)
+   * 🧠 DETECTAR INTENCIÓN
    **************************************************************/
   const rawIntent = await detectIntent(text, userId);
   const intent = rawIntent.toLowerCase();
@@ -169,14 +186,16 @@ bot.on("text", async (ctx) => {
   if (intent.includes("solicitud")) {
     userState[userId] = {
       paso: "servicio",
-      datos: {}
+      datos: {},
     };
 
     return ctx.reply("📋 Perfecto.\n🛠️ ¿Qué servicio necesitas?");
   }
 
   if (intent === "info") {
-    return ctx.reply("ℹ️ Brindamos información general sobre nuestros servicios.");
+    return ctx.reply(
+      "ℹ️ Brindamos información general sobre nuestros servicios."
+    );
   }
 
   if (intent === "support") {
