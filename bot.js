@@ -31,6 +31,23 @@ const db = new Pool({
 });
 
 /******************************************************************
+ * ✅ CREAR TABLA AUTOMÁTICAMENTE
+ ******************************************************************/
+async function initDB() {
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS solicitudes (
+      id SERIAL PRIMARY KEY,
+      user_id BIGINT,
+      servicio TEXT,
+      fecha TEXT,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+  `);
+
+  console.log("✅ Tabla 'solicitudes' verificada");
+}
+
+/******************************************************************
  * 🌐 APP EXPRESS
  ******************************************************************/
 const app = express();
@@ -144,7 +161,6 @@ bot.on("text", async (ctx) => {
     if (estado.paso === "fecha") {
       estado.datos.fecha = text;
 
-      // 💾 GUARDAR EN POSTGRESQL
       await db.query(
         "INSERT INTO solicitudes (user_id, servicio, fecha) VALUES ($1, $2, $3)",
         [userId, estado.datos.servicio, estado.datos.fecha]
@@ -174,9 +190,7 @@ bot.on("text", async (ctx) => {
   }
 
   if (intent === "info") {
-    return ctx.reply(
-      "ℹ️ Brindamos información general sobre nuestros servicios."
-    );
+    return ctx.reply("ℹ️ Brindamos información general sobre nuestros servicios.");
   }
 
   if (intent === "support") {
@@ -195,18 +209,21 @@ const WEBHOOK_URL = `${process.env.RENDER_EXTERNAL_URL}${WEBHOOK_PATH}`;
 
 app.post(WEBHOOK_PATH, bot.webhookCallback(WEBHOOK_PATH));
 
-bot.telegram.setWebhook(WEBHOOK_URL).then(() => {
-  console.log("🚀 Webhook activo:", WEBHOOK_URL);
-});
-
 /******************************************************************
- * 🔎 PING
+ * 🚀 INICIAR TODO EN ORDEN (CLAVE)
  ******************************************************************/
-app.get("/ping", (req, res) => res.send("pong"));
+async function start() {
+  await initDB(); // ⬅️ crea tabla primero
 
-/******************************************************************
- * 🚀 INICIAR SERVIDOR
- ******************************************************************/
-app.listen(PORT, () => {
-  console.log(`🌐 Servidor activo en puerto ${PORT}`);
-});
+  bot.telegram.setWebhook(WEBHOOK_URL).then(() => {
+    console.log("🚀 Webhook activo:", WEBHOOK_URL);
+  });
+
+  app.get("/ping", (req, res) => res.send("pong"));
+
+  app.listen(PORT, () => {
+    console.log(`🌐 Servidor activo en puerto ${PORT}`);
+  });
+}
+
+start();
