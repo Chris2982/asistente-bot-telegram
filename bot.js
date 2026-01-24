@@ -1,5 +1,6 @@
 /******************************************************************
  * 🔥 CARGA DE VARIABLES DE ENTORNO
+ * Importa las variables definidas en tu archivo .env
  ******************************************************************/
 import "dotenv/config";
 import express from "express";
@@ -8,7 +9,7 @@ import fetch from "node-fetch";
 import dialogflow from "@google-cloud/dialogflow";
 import pkg from "pg";
 
-const { Pool } = pkg;
+const { Pool } = pkg; // Importamos el Pool de PostgreSQL para manejar la conexión.
 
 /******************************************************************
  * ⚙️ VARIABLES DE ENTORNO
@@ -24,14 +25,16 @@ if (!DF_PROJECT_ID) throw new Error("❌ FALTA DF_PROJECT_ID");
 
 /******************************************************************
  * 🗄️ CONEXIÓN POSTGRESQL (RENDER)
+ * Se conecta a la base de datos usando la URL de Render
  ******************************************************************/
 const db = new Pool({
   connectionString: process.env.DATABASE_URL,
-  ssl: { rejectUnauthorized: false },
+  ssl: { rejectUnauthorized: false }, // Necesario en Render para SSL
 });
 
 /******************************************************************
  * ✅ CREAR TABLA AUTOMÁTICAMENTE
+ * Verifica si la tabla 'solicitudes' existe y si no, la crea.
  ******************************************************************/
 async function initDB() {
   await db.query(`
@@ -43,12 +46,12 @@ async function initDB() {
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
   `);
-
   console.log("✅ Tabla 'solicitudes' verificada");
 }
 
 /******************************************************************
  * 🌐 APP EXPRESS
+ * Configura el servidor web mínimo
  ******************************************************************/
 const app = express();
 app.use(express.json());
@@ -60,16 +63,19 @@ const bot = new Telegraf(TELEGRAM_TOKEN);
 
 /******************************************************************
  * 🧠 MEMORIA EN RAM (FLUJOS)
+ * Guarda temporalmente el estado de cada usuario
  ******************************************************************/
 const userState = {};
 
 /******************************************************************
  * 🤖 CLIENTE DIALOGFLOW
+ * Para detectar la intención del mensaje
  ******************************************************************/
 const dfClient = new dialogflow.SessionsClient();
 
 /******************************************************************
  * 🧠 DETECTAR INTENCIÓN
+ * Función para enviar el texto a Dialogflow y obtener la intención
  ******************************************************************/
 async function detectIntent(text, sessionId) {
   try {
@@ -94,7 +100,8 @@ async function detectIntent(text, sessionId) {
 }
 
 /******************************************************************
- * 🤖 IA (SOLO FALLBACK)
+ * 🤖 FALLBACK IA (DeepSeek)
+ * Responde cuando Dialogflow no reconoce la intención
  ******************************************************************/
 async function askDeepSeek(text) {
   try {
@@ -132,6 +139,7 @@ async function askDeepSeek(text) {
 
 /******************************************************************
  * /start
+ * Saluda al usuario cuando inicia la conversación
  ******************************************************************/
 bot.start((ctx) => {
   ctx.reply(`¡Hola ${ctx.from.first_name}! 👋`);
@@ -140,27 +148,32 @@ bot.start((ctx) => {
 
 /******************************************************************
  * MENSAJES
+ * Maneja todos los mensajes de texto del usuario
  ******************************************************************/
 bot.on("text", async (ctx) => {
   const text = ctx.message.text;
   const userId = ctx.from.id;
 
-  if (text.startsWith("/")) return;
+  if (text.startsWith("/")) return; // Ignora comandos especiales
 
   console.log("📩 MENSAJE:", text);
 
+  // 🔁 Flujos de usuario en memoria RAM
   if (userState[userId]) {
     const estado = userState[userId];
 
+    // PASO 1: Servicio
     if (estado.paso === "servicio") {
       estado.datos.servicio = text;
       estado.paso = "fecha";
       return ctx.reply("📅 ¿Para qué fecha necesitas el servicio?");
     }
 
+    // PASO 2: Fecha
     if (estado.paso === "fecha") {
       estado.datos.fecha = text;
 
+      // 💾 Guardar en PostgreSQL
       await db.query(
         "INSERT INTO solicitudes (user_id, servicio, fecha) VALUES ($1, $2, $3)",
         [userId, estado.datos.servicio, estado.datos.fecha]
@@ -179,69 +192,53 @@ bot.on("text", async (ctx) => {
     }
   }
 
+  // 🧠 Detectar intención con Dialogflow
   const rawIntent = await detectIntent(text, userId);
   const intent = rawIntent.toLowerCase();
 
   console.log("🎯 INTENCIÓN:", rawIntent);
 
+  // 🚀 Iniciar flujo de solicitud
   if (rawIntent === "Solicitud") {
     userState[userId] = { paso: "servicio", datos: {} };
     return ctx.reply("📋 Perfecto.\n🛠️ ¿Qué servicio necesitas?");
   }
 
-  /******************************************************************
- * 📋 CONSULTAR SOLICITUDES GUARDADAS
- ******************************************************************/
-if (rawIntent === "ConsultarSolicitudes") {
-  try {
-    const result = await db.query(
-      "SELECT servicio, fecha FROM solicitudes ORDER BY id DESC LIMIT 5"
-    );
+  // 📋 Consultar últimas solicitudes
+  if (rawIntent === "ConsultarSolicitudes") {
+    try {
+      const result = await db.query(
+        "SELECT servicio, fecha, created_at FROM solicitudes ORDER BY id DESC LIMIT 5"
+      );
 
-    if (result.rows.length === 0) {
-      return ctx.reply("📭 No hay solicitudes registradas aún.");
+      if (result.rows.length === 0) {
+        return ctx.reply("📭 No hay solicitudes registradas aún.");
+      }
+
+      let mensaje = "📋 Últimas solicitudes registradas:\n\n";
+
+      result.rows.forEach((row, index) => {
+        mensaje += `${index + 1}️⃣ 🛠️ ${row.servicio} - 📅 ${row.fecha} (🕒 ${row.created_at.toLocaleString()})\n`;
+      });
+
+      return ctx.reply(mensaje);
+    } catch (error) {
+      console.error("❌ Error consultando solicitudes:", error);
+      return ctx.reply("⚠️ Error al consultar las solicitudes.");
     }
-
-    let mensaje = "📋 Últimas solicitudes registradas:\n\n";
-
-    result.rows.forEach((row, index) => {
-      mensaje += `${index + 1}️⃣ ${row.servicio} - ${row.fecha}\n`;
-    });
-
-    return ctx.reply(mensaje);
-  } catch (error) {
-    console.error("❌ Error consultando solicitudes:", error);
-    return ctx.reply("⚠️ Error al consultar las solicitudes.");
   }
-}
 
+  // ℹ️ Información general
   if (intent === "info") {
     return ctx.reply("ℹ️ Brindamos información general sobre nuestros servicios.");
   }
 
+  // 🛠️ Soporte técnico
   if (intent === "support") {
     return ctx.reply("🛠️ Soporte técnico: soporte@tudominio.com");
   }
 
-  // 📋 VER TODAS LAS SOLICITUDES (ADMIN)
-if (intent.toLowerCase().includes("consultarsolicitudes")) {
-  const result = await db.query(
-    "SELECT id, servicio, fecha, created_at FROM solicitudes ORDER BY id DESC LIMIT 10"
-  );
-
-  if (result.rows.length === 0) {
-    return ctx.reply("📭 No hay solicitudes registradas.");
-  }
-
-  let mensaje = "📋 Últimas solicitudes:\n\n";
-
-  result.rows.forEach((row) => {
-    mensaje += `🆔 ${row.id}\n🛠️ ${row.servicio}\n📅 ${row.fecha}\n🕒 ${row.created_at}\n\n`;
-  });
-
-  return ctx.reply(mensaje);
-}
-
+  // Fallback a IA
   const aiReply = await askDeepSeek(text);
   return ctx.reply(aiReply);
 });
@@ -255,10 +252,10 @@ const WEBHOOK_URL = `${process.env.RENDER_EXTERNAL_URL}${WEBHOOK_PATH}`;
 app.post(WEBHOOK_PATH, bot.webhookCallback(WEBHOOK_PATH));
 
 /******************************************************************
- * 🚀 INICIAR TODO EN ORDEN (CLAVE)
+ * 🚀 INICIAR SERVIDOR Y BASE DE DATOS
  ******************************************************************/
 async function start() {
-  await initDB(); // ⬅️ crea tabla primero
+  await initDB(); // Crea la tabla si no existe
 
   bot.telegram.setWebhook(WEBHOOK_URL).then(() => {
     console.log("🚀 Webhook activo:", WEBHOOK_URL);
