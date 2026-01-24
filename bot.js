@@ -184,7 +184,7 @@ bot.on("text", async (ctx) => {
 
   console.log("🎯 INTENCIÓN:", rawIntent);
 
-  if (intent.includes("solicitud")) {
+  if (rawIntent === "Solicitud") {
     userState[userId] = { paso: "servicio", datos: {} };
     return ctx.reply("📋 Perfecto.\n🛠️ ¿Qué servicio necesitas?");
   }
@@ -192,7 +192,7 @@ bot.on("text", async (ctx) => {
   /******************************************************************
  * 📋 CONSULTAR SOLICITUDES GUARDADAS
  ******************************************************************/
-if (intent.includes("consultarsolicitudes")) {
+if (rawIntent === "ConsultarSolicitudes") {
   try {
     const result = await db.query(
       "SELECT servicio, fecha FROM solicitudes ORDER BY id DESC LIMIT 5"
