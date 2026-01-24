@@ -1,15 +1,13 @@
 /******************************************************************
  * 🔥 CARGA DE VARIABLES DE ENTORNO
  ******************************************************************/
-import "dotenv/config";
-import express from "express";
-import { Telegraf } from "telegraf";
-import fetch from "node-fetch";
-import dialogflow from "@google-cloud/dialogflow";
-import pkg from "pg";
-import { stringify } from "csv-stringify/sync"; // 📌 Para generar CSV
-
-const { Pool } = pkg;
+import "dotenv/config";                 // Carga las variables del archivo .env
+import express from "express";          // Servidor web
+import { Telegraf } from "telegraf";    // Librería de Telegram
+import fetch from "node-fetch";         // Para llamadas HTTP a la IA
+import dialogflow from "@google-cloud/dialogflow"; // Dialogflow
+import pkg from "pg";                    // PostgreSQL
+const { Pool } = pkg;                    // Pool de conexiones PostgreSQL
 
 /******************************************************************
  * ⚙️ VARIABLES DE ENTORNO
@@ -27,8 +25,8 @@ if (!DF_PROJECT_ID) throw new Error("❌ FALTA DF_PROJECT_ID");
  * 🗄️ CONEXIÓN POSTGRESQL (RENDER)
  ******************************************************************/
 const db = new Pool({
-  connectionString: process.env.DATABASE_URL,
-  ssl: { rejectUnauthorized: false },
+  connectionString: process.env.DATABASE_URL, // URL de la base de datos de Render
+  ssl: { rejectUnauthorized: false },         // SSL necesario en Render
 });
 
 /******************************************************************
@@ -60,9 +58,9 @@ app.use(express.json());
 const bot = new Telegraf(TELEGRAM_TOKEN);
 
 /******************************************************************
- * 🧠 MEMORIA EN RAM (FLUJOS)
+ * 🧠 MEMORIA EN RAM (FLUJOS POR USUARIO)
  ******************************************************************/
-const userState = {};
+const userState = {}; // Guarda paso actual y datos del usuario mientras está en flujo
 
 /******************************************************************
  * 🤖 CLIENTE DIALOGFLOW
@@ -70,7 +68,7 @@ const userState = {};
 const dfClient = new dialogflow.SessionsClient();
 
 /******************************************************************
- * 🧠 DETECTAR INTENCIÓN
+ * 🧠 DETECTAR INTENCIÓN CON DIALOGFLOW
  ******************************************************************/
 async function detectIntent(text, sessionId) {
   try {
@@ -95,7 +93,7 @@ async function detectIntent(text, sessionId) {
 }
 
 /******************************************************************
- * 🤖 IA (SOLO FALLBACK)
+ * 🤖 FALLBACK IA CON DEEPSEEK
  ******************************************************************/
 async function askDeepSeek(text) {
   try {
@@ -143,25 +141,27 @@ bot.start((ctx) => {
  * MENSAJES
  ******************************************************************/
 bot.on("text", async (ctx) => {
-  const text = ctx.message.text;
+  const text = ctx.message.text.toLowerCase(); // minúsculas para comparar
   const userId = ctx.from.id;
 
-  if (text.startsWith("/")) return;
+  if (text.startsWith("/")) return; // Ignorar comandos slash
 
   console.log("📩 MENSAJE:", text);
 
-  // 🔁 USUARIO EN FLUJO ACTIVO
+  // 🔁 Usuario en flujo activo
   if (userState[userId]) {
     const estado = userState[userId];
 
+    // PASO 1: Servicio
     if (estado.paso === "servicio") {
-      estado.datos.servicio = text;
+      estado.datos.servicio = ctx.message.text;
       estado.paso = "fecha";
       return ctx.reply("📅 ¿Para qué fecha necesitas el servicio?");
     }
 
+    // PASO 2: Fecha
     if (estado.paso === "fecha") {
-      estado.datos.fecha = text;
+      estado.datos.fecha = ctx.message.text;
 
       await db.query(
         "INSERT INTO solicitudes (user_id, servicio, fecha) VALUES ($1, $2, $3)",
@@ -170,9 +170,9 @@ bot.on("text", async (ctx) => {
 
       await ctx.reply(
         "✅ Solicitud registrada:\n" +
-          `🛠️ Servicio: ${estado.datos.servicio}\n` +
-          `📅 Fecha: ${estado.datos.fecha}\n\n` +
-          "Un representante del negocio se comunicará contigo."
+        `🛠️ Servicio: ${estado.datos.servicio}\n` +
+        `📅 Fecha: ${estado.datos.fecha}\n\n` +
+        "Un representante del negocio se comunicará contigo."
       );
 
       console.log("📦 SOLICITUD GUARDADA:", estado.datos);
@@ -181,42 +181,32 @@ bot.on("text", async (ctx) => {
     }
   }
 
-  // 🧠 DETECTAR INTENCIÓN
-  const rawIntent = await detectIntent(text, userId);
-  const intent = rawIntent.toLowerCase();
-  console.log("🎯 INTENCIÓN:", rawIntent);
-
-  // 🚀 INICIAR FLUJO DE SOLICITUD
-  if (rawIntent === "Solicitud") {
+  // 🚀 Comandos directos
+  if (text.includes("solicitud")) {
     userState[userId] = { paso: "servicio", datos: {} };
     return ctx.reply("📋 Perfecto.\n🛠️ ¿Qué servicio necesitas?");
   }
 
-  // 📋 CONSULTAR SOLICITUDES GUARDADAS
-  if (rawIntent === "ConsultarSolicitudes") {
-    try {
-      const result = await db.query(
-        "SELECT servicio, fecha FROM solicitudes ORDER BY id DESC LIMIT 5"
-      );
+  // 📋 Consultar últimas solicitudes
+  if (text.includes("consultar solicitudes")) {
+    const result = await db.query(
+      "SELECT id, servicio, fecha, created_at FROM solicitudes ORDER BY id DESC LIMIT 10"
+    );
 
-      if (result.rows.length === 0) {
-        return ctx.reply("📭 No hay solicitudes registradas aún.");
-      }
-
-      let mensaje = "📋 Últimas solicitudes registradas:\n\n";
-      result.rows.forEach((row, index) => {
-        mensaje += `${index + 1}️⃣ ${row.servicio} - ${row.fecha}\n`;
-      });
-
-      return ctx.reply(mensaje);
-    } catch (error) {
-      console.error("❌ Error consultando solicitudes:", error);
-      return ctx.reply("⚠️ Error al consultar las solicitudes.");
+    if (result.rows.length === 0) {
+      return ctx.reply("📭 No hay solicitudes registradas.");
     }
+
+    let mensaje = "📋 Últimas solicitudes:\n\n";
+    result.rows.forEach((row) => {
+      mensaje += `🆔 ${row.id}\n🛠️ ${row.servicio}\n📅 ${row.fecha}\n🕒 ${row.created_at}\n\n`;
+    });
+
+    return ctx.reply(mensaje);
   }
 
-  // 📋 GENERAR REPORTE CSV
-  if (rawIntent === "Reporte") {
+  // 📝 Comando Reporte: genera CSV y envía documento
+  if (text.includes("reporte")) {
     try {
       const result = await db.query(
         "SELECT id, user_id, servicio, fecha, created_at FROM solicitudes ORDER BY id DESC"
@@ -226,6 +216,8 @@ bot.on("text", async (ctx) => {
         return ctx.reply("📭 No hay solicitudes para generar el reporte.");
       }
 
+      // Generar CSV en memoria
+      const { stringify } = await import("csv-stringify/sync");
       const csv = stringify(result.rows, { header: true });
 
       await ctx.replyWithDocument({
@@ -240,16 +232,18 @@ bot.on("text", async (ctx) => {
     }
   }
 
-  if (intent === "info") {
+  // Info general
+  if (text.includes("info")) {
     return ctx.reply("ℹ️ Brindamos información general sobre nuestros servicios.");
   }
 
-  if (intent === "support") {
+  // Soporte técnico
+  if (text.includes("soporte")) {
     return ctx.reply("🛠️ Soporte técnico: soporte@tudominio.com");
   }
 
   // Fallback IA
-  const aiReply = await askDeepSeek(text);
+  const aiReply = await askDeepSeek(ctx.message.text);
   return ctx.reply(aiReply);
 });
 
@@ -258,13 +252,14 @@ bot.on("text", async (ctx) => {
  ******************************************************************/
 const WEBHOOK_PATH = "/telegram";
 const WEBHOOK_URL = `${process.env.RENDER_EXTERNAL_URL}${WEBHOOK_PATH}`;
+
 app.post(WEBHOOK_PATH, bot.webhookCallback(WEBHOOK_PATH));
 
 /******************************************************************
  * 🚀 INICIAR TODO EN ORDEN
  ******************************************************************/
 async function start() {
-  await initDB(); // ⬅️ crea tabla primero
+  await initDB(); // Crea tabla si no existe
 
   bot.telegram.setWebhook(WEBHOOK_URL).then(() => {
     console.log("🚀 Webhook activo:", WEBHOOK_URL);
