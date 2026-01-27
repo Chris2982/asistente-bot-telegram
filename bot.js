@@ -1,13 +1,13 @@
 /******************************************************************
  * 🔥 CARGA DE VARIABLES DE ENTORNO
  ******************************************************************/
-import "dotenv/config"; // Carga variables de .env
+import "dotenv/config";
 import express from "express";
 import { Telegraf } from "telegraf";
 import fetch from "node-fetch";
 import dialogflow from "@google-cloud/dialogflow";
 import pkg from "pg";
-import { stringify } from "csv-stringify/sync"; // Para generar CSV de reportes
+import { stringify } from "csv-stringify/sync";
 
 const { Pool } = pkg;
 
@@ -18,7 +18,7 @@ const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN;
 const DEEPSEEK_API_KEY = process.env.DEEPSEEK_API_KEY;
 const DF_PROJECT_ID = process.env.DF_PROJECT_ID;
 const PORT = process.env.PORT || 3001;
-const DATABASE_URL = process.env.DATABASE_URL; // Postgres URL de Render
+const DATABASE_URL = process.env.DATABASE_URL;
 
 if (!TELEGRAM_TOKEN) throw new Error("❌ FALTA TELEGRAM_TOKEN");
 if (!DEEPSEEK_API_KEY) throw new Error("❌ FALTA DEEPSEEK_API_KEY");
@@ -34,10 +34,9 @@ const db = new Pool({
 });
 
 /******************************************************************
- * ✅ CREAR TABLAS AUTOMÁTICAMENTE
+ * ✅ CREAR TABLAS
  ******************************************************************/
 async function initDB() {
-  // Tabla de solicitudes
   await db.query(`
     CREATE TABLE IF NOT EXISTS solicitudes (
       id SERIAL PRIMARY KEY,
@@ -48,7 +47,6 @@ async function initDB() {
     );
   `);
 
-  // Tabla para guardar interacciones (mensajes/respuestas)
   await db.query(`
     CREATE TABLE IF NOT EXISTS interacciones (
       id SERIAL PRIMARY KEY,
@@ -58,29 +56,19 @@ async function initDB() {
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
   `);
-
-  console.log("✅ Tablas 'solicitudes' e 'interacciones' verificadas");
 }
 
 /******************************************************************
- * 🌐 APP EXPRESS
+ * 🌐 EXPRESS
  ******************************************************************/
 const app = express();
 app.use(express.json());
 
 /******************************************************************
- * 🤖 BOT TELEGRAM
+ * 🤖 BOT
  ******************************************************************/
 const bot = new Telegraf(TELEGRAM_TOKEN);
-
-/******************************************************************
- * 🧠 MEMORIA EN RAM (FLUJOS)
- ******************************************************************/
-const userState = {}; // Para guardar paso actual de cada usuario
-
-/******************************************************************
- * 🤖 CLIENTE DIALOGFLOW
- ******************************************************************/
+const userState = {};
 const dfClient = new dialogflow.SessionsClient();
 
 /******************************************************************
@@ -93,62 +81,45 @@ async function detectIntent(text, sessionId) {
       sessionId.toString()
     );
 
-    const request = {
+    const [response] = await dfClient.detectIntent({
       session: sessionPath,
       queryInput: { text: { text, languageCode: "es" } },
-    };
+    });
 
-    const [response] = await dfClient.detectIntent(request);
     return response.queryResult.intent?.displayName || "fallback";
-  } catch (err) {
-    console.error("❌ Dialogflow:", err);
+  } catch {
     return "fallback";
   }
 }
 
 /******************************************************************
- * 🤖 IA (SOLO FALLBACK)
+ * 🤖 IA FALLBACK
  ******************************************************************/
 async function askDeepSeek(text) {
-  try {
-    const response = await fetch(
-      "https://openrouter.ai/api/v1/chat/completions",
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${DEEPSEEK_API_KEY}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          model: "deepseek/deepseek-chat",
-          temperature: 0.3,
-          max_tokens: 160,
-          messages: [
-            {
-              role: "system",
-              content:
-                "Eres un asistente empresarial. Responde solo en español. Máximo 3 líneas.",
-            },
-            { role: "user", content: text },
-          ],
-        }),
-      }
-    );
+  const response = await fetch(
+    "https://openrouter.ai/api/v1/chat/completions",
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${DEEPSEEK_API_KEY}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "deepseek/deepseek-chat",
+        messages: [{ role: "user", content: text }],
+      }),
+    }
+  );
 
-    const data = await response.json();
-    return data.choices?.[0]?.message?.content || "No pude responder.";
-  } catch (err) {
-    console.error("❌ IA:", err);
-    return "⚠️ Error con la IA.";
-  }
+  const data = await response.json();
+  return data.choices?.[0]?.message?.content || "No pude responder.";
 }
 
 /******************************************************************
- * /start
+ * START
  ******************************************************************/
 bot.start((ctx) => {
   ctx.reply(`¡Hola ${ctx.from.first_name}! 👋`);
-  ctx.reply("¿En qué puedo ayudarte?");
 });
 
 /******************************************************************
@@ -158,166 +129,97 @@ bot.on("text", async (ctx) => {
   const text = ctx.message.text;
   const userId = ctx.from.id;
 
-  if (text.startsWith("/")) return;
-
-  console.log("📩 MENSAJE:", text);
-
-  /**************************************************************
-   * 🔁 FLUJO DE REGISTRO DE SOLICITUD
-   **************************************************************/
+  /********************* FLUJOS EN CURSO *********************/
   if (userState[userId]) {
     const estado = userState[userId];
 
-    if (estado.paso === "servicio") {
-      estado.datos.servicio = text;
-      estado.paso = "fecha";
-      return ctx.reply("📅 ¿Para qué fecha necesitas el servicio?");
+    // MODIFICAR
+    if (estado.paso === "modificar_id") {
+      estado.id = text;
+      estado.paso = "modificar_servicio";
+      return ctx.reply("🛠️ Nuevo servicio:");
     }
 
-    if (estado.paso === "fecha") {
-      estado.datos.fecha = text;
+    if (estado.paso === "modificar_servicio") {
+      estado.servicio = text;
+      estado.paso = "modificar_fecha";
+      return ctx.reply("📅 Nueva fecha:");
+    }
 
-      // Guardar en solicitudes
+    if (estado.paso === "modificar_fecha") {
       await db.query(
-        "INSERT INTO solicitudes (user_id, servicio, fecha) VALUES ($1, $2, $3)",
-        [userId, estado.datos.servicio, estado.datos.fecha]
+        "UPDATE solicitudes SET servicio=$1, fecha=$2 WHERE id=$3",
+        [estado.servicio, text, estado.id]
       );
-
-      const mensaje = `✅ Solicitud registrada:\n🛠️ Servicio: ${estado.datos.servicio}\n📅 Fecha: ${estado.datos.fecha}\n\nUn representante se comunicará contigo.`;
-
-      // Guardar interacción
-      await db.query(
-        "INSERT INTO interacciones (user_id, mensaje, respuesta) VALUES ($1, $2, $3)",
-        [userId, text, mensaje]
-      );
-
-      await ctx.reply(mensaje);
-      console.log("📦 SOLICITUD GUARDADA:", estado.datos);
       delete userState[userId];
-      return;
+      return ctx.reply("✅ Solicitud modificada correctamente.");
+    }
+
+    // CANCELAR
+    if (estado.paso === "cancelar_id") {
+      await db.query("DELETE FROM solicitudes WHERE id=$1", [text]);
+      delete userState[userId];
+      return ctx.reply("🗑️ Solicitud cancelada.");
     }
   }
 
-  /**************************************************************
-   * 📊 GENERAR REPORTE CSV (SIN INTENT)
-   **************************************************************/
-  if (text.toLowerCase() === "reporte" || text.toLowerCase() === "/reporte") {
-    try {
-      const result = await db.query(
-        "SELECT user_id, servicio, fecha, created_at FROM solicitudes ORDER BY id DESC"
-      );
+  /********************* REPORTE *********************/
+  if (text.toLowerCase() === "reporte") {
+    const result = await db.query(
+      "SELECT * FROM solicitudes ORDER BY id DESC"
+    );
 
-      if (result.rows.length === 0) {
-        return ctx.reply("📭 No hay solicitudes para generar reporte.");
-      }
-
-      const csv = stringify(result.rows, {
-        header: true,
-        columns: {
-          user_id: "Usuario",
-          servicio: "Servicio",
-          fecha: "Fecha",
-          created_at: "Creado en",
-        },
-      });
-
-      await ctx.replyWithDocument({
-        source: Buffer.from(csv, "utf-8"),
-        filename: "reporte_solicitudes.csv",
-      });
-
-      console.log("📊 Reporte generado");
-      return;
-    } catch (error) {
-      console.error("❌ Error generando reporte:", error);
-      return ctx.reply("⚠️ Error al generar reporte.");
-    }
+    const csv = stringify(result.rows, { header: true });
+    return ctx.replyWithDocument({
+      source: Buffer.from(csv),
+      filename: "reporte.csv",
+    });
   }
 
-  /**************************************************************
-   * 🧠 DETECTAR INTENCIÓN
-   **************************************************************/
-  const rawIntent = await detectIntent(text, userId);
-  const intent = rawIntent.toLowerCase();
-  console.log("🎯 INTENCIÓN:", rawIntent);
+  /********************* INTENCIONES *********************/
+  const intent = await detectIntent(text, userId);
 
-  /**************************************************************
-   * 🚀 INICIAR SOLICITUD
-   **************************************************************/
-  if (rawIntent === "Solicitud") {
+  if (intent === "Solicitud") {
     userState[userId] = { paso: "servicio", datos: {} };
-    return ctx.reply("📋 Perfecto.\n🛠️ ¿Qué servicio necesitas?");
+    return ctx.reply("¿Qué servicio necesitas?");
   }
 
-  /**************************************************************
-   * 📋 CONSULTAR SOLICITUDES (TOP 5)
-   **************************************************************/
-  if (rawIntent === "ConsultarSolicitudes") {
-    try {
-      const result = await db.query(
-        "SELECT servicio, fecha FROM solicitudes ORDER BY id DESC LIMIT 5"
-      );
-
-      if (result.rows.length === 0) {
-        return ctx.reply("📭 No hay solicitudes registradas aún.");
-      }
-
-      let mensaje = "📋 Últimas solicitudes registradas:\n\n";
-      result.rows.forEach((row, index) => {
-        mensaje += `${index + 1}️⃣ ${row.servicio} - ${row.fecha}\n`;
-      });
-
-      return ctx.reply(mensaje);
-    } catch (error) {
-      console.error("❌ Error consultando solicitudes:", error);
-      return ctx.reply("⚠️ Error al consultar las solicitudes.");
-    }
+  if (intent === "ModificarSolicitud") {
+    userState[userId] = { paso: "modificar_id" };
+    return ctx.reply("🔎 Indica el ID de la solicitud a modificar:");
   }
 
-  if (intent === "info") {
-    return ctx.reply("ℹ️ Brindamos información general sobre nuestros servicios.");
+  if (intent === "CancelarSolicitud") {
+    userState[userId] = { paso: "cancelar_id" };
+    return ctx.reply("🔎 Indica el ID de la solicitud a cancelar:");
   }
 
-  if (intent === "support") {
-    return ctx.reply("🛠️ Soporte técnico: soporte@tudominio.com");
+  if (intent === "ConsultarSolicitudes") {
+    const result = await db.query(
+      "SELECT id, servicio, fecha FROM solicitudes ORDER BY id DESC LIMIT 5"
+    );
+
+    let msg = "📋 Últimas solicitudes:\n\n";
+    result.rows.forEach((r) => {
+      msg += `🆔 ${r.id} | ${r.servicio} | ${r.fecha}\n`;
+    });
+
+    return ctx.reply(msg);
   }
 
-  /**************************************************************
-   * 🤖 FALLBACK IA
-   **************************************************************/
+  /********************* IA *********************/
   const aiReply = await askDeepSeek(text);
-
-  // Guardar interacción de fallback
-  await db.query(
-    "INSERT INTO interacciones (user_id, mensaje, respuesta) VALUES ($1, $2, $3)",
-    [userId, text, aiReply]
-  );
-
   return ctx.reply(aiReply);
 });
 
 /******************************************************************
- * 🔁 WEBHOOK (RENDER)
+ * WEBHOOK + START
  ******************************************************************/
 const WEBHOOK_PATH = "/telegram";
-const WEBHOOK_URL = `${process.env.RENDER_EXTERNAL_URL}${WEBHOOK_PATH}`;
 app.post(WEBHOOK_PATH, bot.webhookCallback(WEBHOOK_PATH));
 
-/******************************************************************
- * 🚀 INICIAR SERVIDOR Y TABLAS
- ******************************************************************/
 async function start() {
-  await initDB(); // Crea tablas automáticamente
-
-  bot.telegram.setWebhook(WEBHOOK_URL).then(() => {
-    console.log("🚀 Webhook activo:", WEBHOOK_URL);
-  });
-
-  app.get("/ping", (req, res) => res.send("pong"));
-
-  app.listen(PORT, () => {
-    console.log(`🌐 Servidor activo en puerto ${PORT}`);
-  });
+  await initDB();
+  app.listen(PORT);
 }
-
 start();
