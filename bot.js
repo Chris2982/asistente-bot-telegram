@@ -56,6 +56,16 @@ async function initDB() {
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
   `);
+
+  // 🧠 NUEVA TABLA DE ESTADO CONVERSACIONAL
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS estados_conversacion (
+      user_id BIGINT PRIMARY KEY,
+      paso TEXT,
+      datos JSONB,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+  `);
 }
 
 /******************************************************************
@@ -68,8 +78,34 @@ app.use(express.json());
  * 🤖 BOT
  ******************************************************************/
 const bot = new Telegraf(TELEGRAM_TOKEN);
-const userState = {};
 const dfClient = new dialogflow.SessionsClient();
+
+/******************************************************************
+ * 🧠 FUNCIONES DE ESTADO (REEMPLAZA userState)
+ ******************************************************************/
+async function getEstado(userId) {
+  const r = await db.query(
+    "SELECT paso, datos FROM estados_conversacion WHERE user_id=$1",
+    [userId]
+  );
+  return r.rows[0] || null;
+}
+
+async function setEstado(userId, paso, datos = {}) {
+  await db.query(
+    `INSERT INTO estados_conversacion (user_id, paso, datos)
+     VALUES ($1,$2,$3)
+     ON CONFLICT (user_id)
+     DO UPDATE SET paso=$2, datos=$3, updated_at=CURRENT_TIMESTAMP`,
+    [userId, paso, datos]
+  );
+}
+
+async function clearEstado(userId) {
+  await db.query("DELETE FROM estados_conversacion WHERE user_id=$1", [
+    userId,
+  ]);
+}
 
 /******************************************************************
  * 🧠 GUARDAR INTERACCIONES
@@ -82,7 +118,7 @@ async function guardarInteraccion(userId, mensaje, respuesta) {
 }
 
 /******************************************************************
- * 🧠 NUEVO: OBTENER ÚLTIMA SOLICITUD DEL USUARIO
+ * 🧠 ÚLTIMA SOLICITUD
  ******************************************************************/
 async function getUltimaSolicitud(userId) {
   const result = await db.query(
@@ -150,55 +186,56 @@ bot.on("text", async (ctx) => {
   const text = ctx.message.text;
   const userId = ctx.from.id;
 
+  const estado = await getEstado(userId);
+
   /********************* FLUJOS EN CURSO *********************/
-  if (userState[userId]) {
-    const estado = userState[userId];
+  if (estado) {
+    const datos = estado.datos || {};
 
     if (estado.paso === "servicio") {
-      estado.datos.servicio = text;
-      estado.paso = "fecha";
+      datos.servicio = text;
+      await setEstado(userId, "fecha", datos);
       return ctx.reply("📅 ¿Para qué fecha necesitas el servicio?");
     }
 
     if (estado.paso === "fecha") {
-      estado.datos.fecha = text;
+      datos.fecha = text;
 
       await db.query(
         "INSERT INTO solicitudes (user_id, servicio, fecha) VALUES ($1,$2,$3)",
-        [userId, estado.datos.servicio, estado.datos.fecha]
+        [userId, datos.servicio, datos.fecha]
       );
 
-      const msg = `✅ Solicitud registrada:\n🛠️ ${estado.datos.servicio}\n📅 ${estado.datos.fecha}`;
+      const msg = `✅ Solicitud registrada:\n🛠️ ${datos.servicio}\n📅 ${datos.fecha}`;
       await guardarInteraccion(userId, text, msg);
 
-      delete userState[userId];
+      await clearEstado(userId);
       return ctx.reply(msg);
     }
 
     if (estado.paso === "modificar_id") {
-      estado.id = text;
-      estado.paso = "modificar_servicio";
+      await setEstado(userId, "modificar_servicio", { id: text });
       return ctx.reply("🛠️ Nuevo servicio:");
     }
 
     if (estado.paso === "modificar_servicio") {
-      estado.servicio = text;
-      estado.paso = "modificar_fecha";
+      datos.servicio = text;
+      await setEstado(userId, "modificar_fecha", datos);
       return ctx.reply("📅 Nueva fecha:");
     }
 
     if (estado.paso === "modificar_fecha") {
       await db.query(
         "UPDATE solicitudes SET servicio=$1, fecha=$2 WHERE id=$3",
-        [estado.servicio, text, estado.id]
+        [datos.servicio, text, datos.id]
       );
-      delete userState[userId];
+      await clearEstado(userId);
       return ctx.reply("✅ Solicitud modificada correctamente.");
     }
 
     if (estado.paso === "cancelar_id") {
       await db.query("DELETE FROM solicitudes WHERE id=$1", [text]);
-      delete userState[userId];
+      await clearEstado(userId);
       return ctx.reply("🗑️ Solicitud cancelada.");
     }
   }
@@ -220,7 +257,7 @@ bot.on("text", async (ctx) => {
   if (intent === "Solicitud") {
     const ultima = await getUltimaSolicitud(userId);
 
-    userState[userId] = { paso: "servicio", datos: {} };
+    await setEstado(userId, "servicio", {});
 
     if (ultima) {
       return ctx.reply(
@@ -232,12 +269,12 @@ bot.on("text", async (ctx) => {
   }
 
   if (intent === "ModificarSolicitud") {
-    userState[userId] = { paso: "modificar_id" };
+    await setEstado(userId, "modificar_id", {});
     return ctx.reply("🔎 Indica el ID de la solicitud a modificar:");
   }
 
   if (intent === "CancelarSolicitud") {
-    userState[userId] = { paso: "cancelar_id" };
+    await setEstado(userId, "cancelar_id", {});
     return ctx.reply("🔎 Indica el ID de la solicitud a cancelar:");
   }
 
