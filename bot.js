@@ -72,13 +72,24 @@ const userState = {};
 const dfClient = new dialogflow.SessionsClient();
 
 /******************************************************************
- * 🧠 GUARDAR INTERACCIONES (MEMORIA PERSISTENTE)
+ * 🧠 GUARDAR INTERACCIONES
  ******************************************************************/
 async function guardarInteraccion(userId, mensaje, respuesta) {
   await db.query(
     "INSERT INTO interacciones (user_id, mensaje, respuesta) VALUES ($1,$2,$3)",
     [userId, mensaje, respuesta]
   );
+}
+
+/******************************************************************
+ * 🧠 NUEVO: OBTENER ÚLTIMA SOLICITUD DEL USUARIO
+ ******************************************************************/
+async function getUltimaSolicitud(userId) {
+  const result = await db.query(
+    "SELECT servicio, fecha FROM solicitudes WHERE user_id=$1 ORDER BY id DESC LIMIT 1",
+    [userId]
+  );
+  return result.rows[0] || null;
 }
 
 /******************************************************************
@@ -143,7 +154,6 @@ bot.on("text", async (ctx) => {
   if (userState[userId]) {
     const estado = userState[userId];
 
-    // SOLICITUD
     if (estado.paso === "servicio") {
       estado.datos.servicio = text;
       estado.paso = "fecha";
@@ -165,7 +175,6 @@ bot.on("text", async (ctx) => {
       return ctx.reply(msg);
     }
 
-    // MODIFICAR
     if (estado.paso === "modificar_id") {
       estado.id = text;
       estado.paso = "modificar_servicio";
@@ -187,7 +196,6 @@ bot.on("text", async (ctx) => {
       return ctx.reply("✅ Solicitud modificada correctamente.");
     }
 
-    // CANCELAR
     if (estado.paso === "cancelar_id") {
       await db.query("DELETE FROM solicitudes WHERE id=$1", [text]);
       delete userState[userId];
@@ -210,7 +218,16 @@ bot.on("text", async (ctx) => {
   const intent = await detectIntent(text, userId);
 
   if (intent === "Solicitud") {
+    const ultima = await getUltimaSolicitud(userId);
+
     userState[userId] = { paso: "servicio", datos: {} };
+
+    if (ultima) {
+      return ctx.reply(
+        `🧠 La última vez solicitaste:\n🛠️ ${ultima.servicio}\n📅 ${ultima.fecha}\n\n¿Deseas el mismo servicio o uno diferente?`
+      );
+    }
+
     return ctx.reply("¿Qué servicio necesitas?");
   }
 
