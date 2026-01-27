@@ -72,6 +72,16 @@ const userState = {};
 const dfClient = new dialogflow.SessionsClient();
 
 /******************************************************************
+ * 🧠 GUARDAR INTERACCIONES (MEMORIA PERSISTENTE)
+ ******************************************************************/
+async function guardarInteraccion(userId, mensaje, respuesta) {
+  await db.query(
+    "INSERT INTO interacciones (user_id, mensaje, respuesta) VALUES ($1,$2,$3)",
+    [userId, mensaje, respuesta]
+  );
+}
+
+/******************************************************************
  * 🧠 DETECTAR INTENCIÓN
  ******************************************************************/
 async function detectIntent(text, sessionId) {
@@ -133,6 +143,28 @@ bot.on("text", async (ctx) => {
   if (userState[userId]) {
     const estado = userState[userId];
 
+    // SOLICITUD
+    if (estado.paso === "servicio") {
+      estado.datos.servicio = text;
+      estado.paso = "fecha";
+      return ctx.reply("📅 ¿Para qué fecha necesitas el servicio?");
+    }
+
+    if (estado.paso === "fecha") {
+      estado.datos.fecha = text;
+
+      await db.query(
+        "INSERT INTO solicitudes (user_id, servicio, fecha) VALUES ($1,$2,$3)",
+        [userId, estado.datos.servicio, estado.datos.fecha]
+      );
+
+      const msg = `✅ Solicitud registrada:\n🛠️ ${estado.datos.servicio}\n📅 ${estado.datos.fecha}`;
+      await guardarInteraccion(userId, text, msg);
+
+      delete userState[userId];
+      return ctx.reply(msg);
+    }
+
     // MODIFICAR
     if (estado.paso === "modificar_id") {
       estado.id = text;
@@ -165,11 +197,9 @@ bot.on("text", async (ctx) => {
 
   /********************* REPORTE *********************/
   if (text.toLowerCase() === "reporte") {
-    const result = await db.query(
-      "SELECT * FROM solicitudes ORDER BY id DESC"
-    );
-
+    const result = await db.query("SELECT * FROM solicitudes ORDER BY id DESC");
     const csv = stringify(result.rows, { header: true });
+
     return ctx.replyWithDocument({
       source: Buffer.from(csv),
       filename: "reporte.csv",
@@ -209,6 +239,7 @@ bot.on("text", async (ctx) => {
 
   /********************* IA *********************/
   const aiReply = await askDeepSeek(text);
+  await guardarInteraccion(userId, text, aiReply);
   return ctx.reply(aiReply);
 });
 
