@@ -80,6 +80,17 @@ const clearEstado = async (userId) => {
 };
 
 /******************************************************************
+ * 🧠 MEMORIA POR INTENCIÓN (ÚLTIMA SOLICITUD)
+ ******************************************************************/
+const getUltimaSolicitud = async (userId) => {
+  const r = await db.query(
+    "SELECT servicio, fecha FROM solicitudes WHERE user_id=$1 ORDER BY id DESC LIMIT 1",
+    [userId]
+  );
+  return r.rows[0] || null;
+};
+
+/******************************************************************
  * 🧠 INTENCIÓN
  ******************************************************************/
 async function detectIntent(text, sessionId) {
@@ -154,7 +165,7 @@ bot.on("text", async (ctx) => {
   const intent = await detectIntent(text, userId);
   console.log("🧠 Intent detectado:", intent);
 
-  // 2️⃣ Limpiar estados viejos si es intención principal
+  // 2️⃣ Limpiar estados si es intención principal
   const intentsPrincipales = [
     "Solicitud",
     "ModificarSolicitud",
@@ -240,7 +251,15 @@ bot.on("text", async (ctx) => {
 
   /**************** INTENTS ****************/
   if (intent === "Solicitud") {
+    const ultima = await getUltimaSolicitud(userId);
     await setEstado(userId, "servicio", {});
+
+    if (ultima) {
+      return ctx.reply(
+        `🧠 La última vez solicitaste:\n🛠️ ${ultima.servicio}\n📅 ${ultima.fecha}\n\n¿Deseas el mismo servicio o uno diferente?`
+      );
+    }
+
     return ctx.reply("¿Qué servicio necesitas?");
   }
 
