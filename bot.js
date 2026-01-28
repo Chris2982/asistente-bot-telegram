@@ -124,26 +124,37 @@ async function askDeepSeek(text) {
 }
 
 /******************************************************************
- * START
+ * START (SALUDO CON NOMBRE)
  ******************************************************************/
-bot.start((ctx) => ctx.reply("¡Hola! 👋"));
+bot.start((ctx) => {
+  const nombre = ctx.from.first_name || "usuario";
+  ctx.reply(`¡Hola ${nombre}! 👋`);
+});
 
 /******************************************************************
  * MENSAJES
  ******************************************************************/
 bot.on("text", async (ctx) => {
-  const text = ctx.message.text;
+  const rawText = ctx.message.text;
+  const text = rawText.trim();
+  const lower = text.toLowerCase();
   const userId = ctx.from.id;
 
   console.log("====================================");
   console.log("👤 Usuario:", userId);
   console.log("💬 Mensaje:", text);
 
-  // 1️⃣ Detectar intención primero
+  /**************** SALUDO RÁPIDO ****************/
+  if (lower === "hola") {
+    const nombre = ctx.from.first_name || "usuario";
+    return ctx.reply(`¡Hola ${nombre}! ¿En qué puedo ayudarte?`);
+  }
+
+  // 1️⃣ Detectar intención
   const intent = await detectIntent(text, userId);
   console.log("🧠 Intent detectado:", intent);
 
-  // 2️⃣ Si es intención principal → limpiar estado viejo
+  // 2️⃣ Limpiar estados viejos si es intención principal
   const intentsPrincipales = [
     "Solicitud",
     "ModificarSolicitud",
@@ -155,7 +166,7 @@ bot.on("text", async (ctx) => {
     await clearEstado(userId);
   }
 
-  // 3️⃣ Revisar estado actual
+  // 3️⃣ Revisar estado
   const estado = await getEstado(userId);
 
   if (estado) {
@@ -217,7 +228,7 @@ bot.on("text", async (ctx) => {
   }
 
   /**************** REPORTE ****************/
-  if (text.toLowerCase() === "reporte") {
+  if (lower === "reporte") {
     const result = await db.query("SELECT * FROM solicitudes ORDER BY id DESC");
     const csv = stringify(result.rows, { header: true });
 
