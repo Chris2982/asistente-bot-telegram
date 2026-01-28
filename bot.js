@@ -12,7 +12,7 @@ import { stringify } from "csv-stringify/sync";
 const { Pool } = pkg;
 
 /******************************************************************
- * ⚙️ VARIABLES DE ENTORNO
+ * ⚙️ VARIABLES
  ******************************************************************/
 const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN;
 const DEEPSEEK_API_KEY = process.env.DEEPSEEK_API_KEY;
@@ -20,13 +20,13 @@ const DF_PROJECT_ID = process.env.DF_PROJECT_ID;
 const PORT = process.env.PORT || 3001;
 const DATABASE_URL = process.env.DATABASE_URL;
 
-if (!TELEGRAM_TOKEN) throw new Error("❌ FALTA TELEGRAM_TOKEN");
-if (!DEEPSEEK_API_KEY) throw new Error("❌ FALTA DEEPSEEK_API_KEY");
-if (!DF_PROJECT_ID) throw new Error("❌ FALTA DF_PROJECT_ID");
-if (!DATABASE_URL) throw new Error("❌ FALTA DATABASE_URL");
+if (!TELEGRAM_TOKEN) throw new Error("FALTA TELEGRAM_TOKEN");
+if (!DEEPSEEK_API_KEY) throw new Error("FALTA DEEPSEEK_API_KEY");
+if (!DF_PROJECT_ID) throw new Error("FALTA DF_PROJECT_ID");
+if (!DATABASE_URL) throw new Error("FALTA DATABASE_URL");
 
 /******************************************************************
- * 🗄️ CONEXIÓN POSTGRESQL
+ * 🗄️ POSTGRES
  ******************************************************************/
 const db = new Pool({
   connectionString: DATABASE_URL,
@@ -34,7 +34,7 @@ const db = new Pool({
 });
 
 /******************************************************************
- * ✅ CREAR TABLAS
+ * 🗄️ TABLAS
  ******************************************************************/
 async function initDB() {
   await db.query(`
@@ -57,7 +57,6 @@ async function initDB() {
     );
   `);
 
-  // 🧠 NUEVA TABLA DE ESTADO CONVERSACIONAL
   await db.query(`
     CREATE TABLE IF NOT EXISTS estados_conversacion (
       user_id BIGINT PRIMARY KEY,
@@ -81,7 +80,7 @@ const bot = new Telegraf(TELEGRAM_TOKEN);
 const dfClient = new dialogflow.SessionsClient();
 
 /******************************************************************
- * 🧠 FUNCIONES DE ESTADO (REEMPLAZA userState)
+ * 🧠 ESTADO EN BD
  ******************************************************************/
 async function getEstado(userId) {
   const r = await db.query(
@@ -108,7 +107,7 @@ async function clearEstado(userId) {
 }
 
 /******************************************************************
- * 🧠 GUARDAR INTERACCIONES
+ * 🧠 FUNCIONES
  ******************************************************************/
 async function guardarInteraccion(userId, mensaje, respuesta) {
   await db.query(
@@ -117,9 +116,6 @@ async function guardarInteraccion(userId, mensaje, respuesta) {
   );
 }
 
-/******************************************************************
- * 🧠 ÚLTIMA SOLICITUD
- ******************************************************************/
 async function getUltimaSolicitud(userId) {
   const result = await db.query(
     "SELECT servicio, fecha FROM solicitudes WHERE user_id=$1 ORDER BY id DESC LIMIT 1",
@@ -128,9 +124,6 @@ async function getUltimaSolicitud(userId) {
   return result.rows[0] || null;
 }
 
-/******************************************************************
- * 🧠 DETECTAR INTENCIÓN
- ******************************************************************/
 async function detectIntent(text, sessionId) {
   try {
     const sessionPath = dfClient.projectAgentSessionPath(
@@ -149,9 +142,6 @@ async function detectIntent(text, sessionId) {
   }
 }
 
-/******************************************************************
- * 🤖 IA FALLBACK
- ******************************************************************/
 async function askDeepSeek(text) {
   const response = await fetch(
     "https://openrouter.ai/api/v1/chat/completions",
@@ -175,9 +165,9 @@ async function askDeepSeek(text) {
 /******************************************************************
  * START
  ******************************************************************/
-bot.start((ctx) => {
-  ctx.reply(`¡Hola ${ctx.from.first_name}! 👋`);
-});
+bot.start((ctx) =>
+  ctx.reply(`¡Hola ${ctx.from.first_name}! 👋`)
+);
 
 /******************************************************************
  * MENSAJES
@@ -186,9 +176,59 @@ bot.on("text", async (ctx) => {
   const text = ctx.message.text;
   const userId = ctx.from.id;
 
+  /************* COMANDO DIRECTO *************/
+  if (text.toLowerCase() === "reporte") {
+    const result = await db.query("SELECT * FROM solicitudes ORDER BY id DESC");
+    const csv = stringify(result.rows, { header: true });
+
+    return ctx.replyWithDocument({
+      source: Buffer.from(csv),
+      filename: "reporte.csv",
+    });
+  }
+
+  /************* INTENCIÓN PRIMERO *************/
+  const intent = await detectIntent(text, userId);
+
+  if (intent === "ConsultarSolicitudes") {
+    const result = await db.query(
+      "SELECT id, servicio, fecha FROM solicitudes ORDER BY id DESC LIMIT 5"
+    );
+
+    let msg = "📋 Últimas solicitudes:\n\n";
+    result.rows.forEach((r) => {
+      msg += `🆔 ${r.id} | ${r.servicio} | ${r.fecha}\n`;
+    });
+
+    return ctx.reply(msg);
+  }
+
+  if (intent === "Solicitud") {
+    const ultima = await getUltimaSolicitud(userId);
+    await setEstado(userId, "servicio", {});
+
+    if (ultima) {
+      return ctx.reply(
+        `🧠 La última vez solicitaste:\n🛠️ ${ultima.servicio}\n📅 ${ultima.fecha}\n\n¿Deseas el mismo servicio o uno diferente?`
+      );
+    }
+
+    return ctx.reply("¿Qué servicio necesitas?");
+  }
+
+  if (intent === "ModificarSolicitud") {
+    await setEstado(userId, "modificar_id", {});
+    return ctx.reply("🔎 Indica el ID de la solicitud a modificar:");
+  }
+
+  if (intent === "CancelarSolicitud") {
+    await setEstado(userId, "cancelar_id", {});
+    return ctx.reply("🔎 Indica el ID de la solicitud a cancelar:");
+  }
+
+  /************* FLUJO EN CURSO *************/
   const estado = await getEstado(userId);
 
-  /********************* FLUJOS EN CURSO *********************/
   if (estado) {
     const datos = estado.datos || {};
 
@@ -206,11 +246,10 @@ bot.on("text", async (ctx) => {
         [userId, datos.servicio, datos.fecha]
       );
 
-      const msg = `✅ Solicitud registrada:\n🛠️ ${datos.servicio}\n📅 ${datos.fecha}`;
-      await guardarInteraccion(userId, text, msg);
-
       await clearEstado(userId);
-      return ctx.reply(msg);
+      return ctx.reply(
+        `✅ Solicitud registrada:\n🛠️ ${datos.servicio}\n📅 ${datos.fecha}`
+      );
     }
 
     if (estado.paso === "modificar_id") {
@@ -240,65 +279,14 @@ bot.on("text", async (ctx) => {
     }
   }
 
-  /********************* REPORTE *********************/
-  if (text.toLowerCase() === "reporte") {
-    const result = await db.query("SELECT * FROM solicitudes ORDER BY id DESC");
-    const csv = stringify(result.rows, { header: true });
-
-    return ctx.replyWithDocument({
-      source: Buffer.from(csv),
-      filename: "reporte.csv",
-    });
-  }
-
-  /********************* INTENCIONES *********************/
-  const intent = await detectIntent(text, userId);
-
-  if (intent === "Solicitud") {
-    const ultima = await getUltimaSolicitud(userId);
-
-    await setEstado(userId, "servicio", {});
-
-    if (ultima) {
-      return ctx.reply(
-        `🧠 La última vez solicitaste:\n🛠️ ${ultima.servicio}\n📅 ${ultima.fecha}\n\n¿Deseas el mismo servicio o uno diferente?`
-      );
-    }
-
-    return ctx.reply("¿Qué servicio necesitas?");
-  }
-
-  if (intent === "ModificarSolicitud") {
-    await setEstado(userId, "modificar_id", {});
-    return ctx.reply("🔎 Indica el ID de la solicitud a modificar:");
-  }
-
-  if (intent === "CancelarSolicitud") {
-    await setEstado(userId, "cancelar_id", {});
-    return ctx.reply("🔎 Indica el ID de la solicitud a cancelar:");
-  }
-
-  if (intent === "ConsultarSolicitudes") {
-    const result = await db.query(
-      "SELECT id, servicio, fecha FROM solicitudes ORDER BY id DESC LIMIT 5"
-    );
-
-    let msg = "📋 Últimas solicitudes:\n\n";
-    result.rows.forEach((r) => {
-      msg += `🆔 ${r.id} | ${r.servicio} | ${r.fecha}\n`;
-    });
-
-    return ctx.reply(msg);
-  }
-
-  /********************* IA *********************/
+  /************* IA *************/
   const aiReply = await askDeepSeek(text);
   await guardarInteraccion(userId, text, aiReply);
   return ctx.reply(aiReply);
 });
 
 /******************************************************************
- * WEBHOOK + START
+ * WEBHOOK
  ******************************************************************/
 const WEBHOOK_PATH = "/telegram";
 app.post(WEBHOOK_PATH, bot.webhookCallback(WEBHOOK_PATH));
@@ -307,4 +295,5 @@ async function start() {
   await initDB();
   app.listen(PORT);
 }
+
 start();
