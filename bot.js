@@ -20,27 +20,36 @@ const DF_PROJECT_ID = process.env.DF_PROJECT_ID;
 const PORT = process.env.PORT || 3001;
 const DATABASE_URL = process.env.DATABASE_URL;
 
-if (!TELEGRAM_TOKEN) throw new Error("❌ FALTA TELEGRAM_TOKEN");
-if (!DEEPSEEK_API_KEY) throw new Error("❌ FALTA DEEPSEEK_API_KEY");
-if (!DF_PROJECT_ID) throw new Error("❌ FALTA DF_PROJECT_ID");
-if (!DATABASE_URL) throw new Error("❌ FALTA DATABASE_URL");
-
-/******************************************************************
- * 🗄️ CONEXIÓN POSTGRESQL
- ******************************************************************/
 const db = new Pool({
   connectionString: DATABASE_URL,
   ssl: { rejectUnauthorized: false },
 });
 
+const app = express();
+app.use(express.json());
+
+const bot = new Telegraf(TELEGRAM_TOKEN);
+const userState = {};
+const dfClient = new dialogflow.SessionsClient();
+
 /******************************************************************
- * ✅ CREAR TABLAS
+ * 🗄️ CREAR TABLAS
  ******************************************************************/
 async function initDB() {
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS empresas (
+      id SERIAL PRIMARY KEY,
+      nombre TEXT,
+      chat_id BIGINT,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+  `);
+
   await db.query(`
     CREATE TABLE IF NOT EXISTS solicitudes (
       id SERIAL PRIMARY KEY,
       user_id BIGINT,
+      empresa_id INT,
       servicio TEXT,
       fecha TEXT,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -56,59 +65,10 @@ async function initDB() {
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
   `);
-
-  // 🧠 NUEVA TABLA DE ESTADO CONVERSACIONAL
-  await db.query(`
-    CREATE TABLE IF NOT EXISTS estados_conversacion (
-      user_id BIGINT PRIMARY KEY,
-      paso TEXT,
-      datos JSONB,
-      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    );
-  `);
 }
 
 /******************************************************************
- * 🌐 EXPRESS
- ******************************************************************/
-const app = express();
-app.use(express.json());
-
-/******************************************************************
- * 🤖 BOT
- ******************************************************************/
-const bot = new Telegraf(TELEGRAM_TOKEN);
-const dfClient = new dialogflow.SessionsClient();
-
-/******************************************************************
- * 🧠 FUNCIONES DE ESTADO (REEMPLAZA userState)
- ******************************************************************/
-async function getEstado(userId) {
-  const r = await db.query(
-    "SELECT paso, datos FROM estados_conversacion WHERE user_id=$1",
-    [userId]
-  );
-  return r.rows[0] || null;
-}
-
-async function setEstado(userId, paso, datos = {}) {
-  await db.query(
-    `INSERT INTO estados_conversacion (user_id, paso, datos)
-     VALUES ($1,$2,$3)
-     ON CONFLICT (user_id)
-     DO UPDATE SET paso=$2, datos=$3, updated_at=CURRENT_TIMESTAMP`,
-    [userId, paso, datos]
-  );
-}
-
-async function clearEstado(userId) {
-  await db.query("DELETE FROM estados_conversacion WHERE user_id=$1", [
-    userId,
-  ]);
-}
-
-/******************************************************************
- * 🧠 GUARDAR INTERACCIONES
+ * 🧠 FUNCIONES DB
  ******************************************************************/
 async function guardarInteraccion(userId, mensaje, respuesta) {
   await db.query(
@@ -117,16 +77,26 @@ async function guardarInteraccion(userId, mensaje, respuesta) {
   );
 }
 
-/******************************************************************
- * 🧠 ÚLTIMA SOLICITUD
- ******************************************************************/
 async function getUltimaSolicitud(userId) {
-  const result = await db.query(
+  const r = await db.query(
     "SELECT servicio, fecha FROM solicitudes WHERE user_id=$1 ORDER BY id DESC LIMIT 1",
     [userId]
   );
-  return result.rows[0] || null;
+  return r.rows[0] || null;
 }
+
+async function getEmpresa() {
+  const r = await db.query("SELECT * FROM empresas LIMIT 1");
+  return r.rows[0] || null;
+}
+
+/******************************************************************
+ * 🤖 REGISTRO DE EMPRESA
+ ******************************************************************/
+bot.command("registrar_empresa", async (ctx) => {
+  userState[ctx.from.id] = { paso: "empresa_nombre" };
+  ctx.reply("🏢 Indica el nombre de tu empresa:");
+});
 
 /******************************************************************
  * 🧠 DETECTAR INTENCIÓN
@@ -175,9 +145,7 @@ async function askDeepSeek(text) {
 /******************************************************************
  * START
  ******************************************************************/
-bot.start((ctx) => {
-  ctx.reply(`¡Hola ${ctx.from.first_name}! 👋`);
-});
+bot.start((ctx) => ctx.reply(`¡Hola ${ctx.from.first_name}! 👋`));
 
 /******************************************************************
  * MENSAJES
@@ -186,61 +154,50 @@ bot.on("text", async (ctx) => {
   const text = ctx.message.text;
   const userId = ctx.from.id;
 
-  const estado = await getEstado(userId);
+  /*************** REGISTRO EMPRESA ***************/
+  if (userState[userId]?.paso === "empresa_nombre") {
+    await db.query(
+      "INSERT INTO empresas (nombre, chat_id) VALUES ($1,$2)",
+      [text, ctx.chat.id]
+    );
+    delete userState[userId];
+    return ctx.reply("✅ Empresa registrada correctamente.");
+  }
 
-  /********************* FLUJOS EN CURSO *********************/
-  if (estado) {
-    const datos = estado.datos || {};
+  /*************** FLUJOS ***************/
+  if (userState[userId]) {
+    const estado = userState[userId];
 
     if (estado.paso === "servicio") {
-      datos.servicio = text;
-      await setEstado(userId, "fecha", datos);
+      estado.datos.servicio = text;
+      estado.paso = "fecha";
       return ctx.reply("📅 ¿Para qué fecha necesitas el servicio?");
     }
 
     if (estado.paso === "fecha") {
-      datos.fecha = text;
+      estado.datos.fecha = text;
 
-      await db.query(
-        "INSERT INTO solicitudes (user_id, servicio, fecha) VALUES ($1,$2,$3)",
-        [userId, datos.servicio, datos.fecha]
+      const empresa = await getEmpresa();
+
+      const r = await db.query(
+        "INSERT INTO solicitudes (user_id, empresa_id, servicio, fecha) VALUES ($1,$2,$3,$4) RETURNING id",
+        [userId, empresa.id, estado.datos.servicio, estado.datos.fecha]
       );
 
-      const msg = `✅ Solicitud registrada:\n🛠️ ${datos.servicio}\n📅 ${datos.fecha}`;
-      await guardarInteraccion(userId, text, msg);
+      const solicitudId = r.rows[0].id;
 
-      await clearEstado(userId);
-      return ctx.reply(msg);
-    }
-
-    if (estado.paso === "modificar_id") {
-      await setEstado(userId, "modificar_servicio", { id: text });
-      return ctx.reply("🛠️ Nuevo servicio:");
-    }
-
-    if (estado.paso === "modificar_servicio") {
-      datos.servicio = text;
-      await setEstado(userId, "modificar_fecha", datos);
-      return ctx.reply("📅 Nueva fecha:");
-    }
-
-    if (estado.paso === "modificar_fecha") {
-      await db.query(
-        "UPDATE solicitudes SET servicio=$1, fecha=$2 WHERE id=$3",
-        [datos.servicio, text, datos.id]
+      // 🔔 NOTIFICAR A LA EMPRESA
+      await bot.telegram.sendMessage(
+        empresa.chat_id,
+        `📦 NUEVO PEDIDO (#${solicitudId})\n🛠️ ${estado.datos.servicio}\n📅 ${estado.datos.fecha}`
       );
-      await clearEstado(userId);
-      return ctx.reply("✅ Solicitud modificada correctamente.");
-    }
 
-    if (estado.paso === "cancelar_id") {
-      await db.query("DELETE FROM solicitudes WHERE id=$1", [text]);
-      await clearEstado(userId);
-      return ctx.reply("🗑️ Solicitud cancelada.");
+      delete userState[userId];
+      return ctx.reply("✅ Tu solicitud fue enviada al negocio.");
     }
   }
 
-  /********************* REPORTE *********************/
+  /*************** REPORTE ***************/
   if (text.toLowerCase() === "reporte") {
     const result = await db.query("SELECT * FROM solicitudes ORDER BY id DESC");
     const csv = stringify(result.rows, { header: true });
@@ -251,54 +208,30 @@ bot.on("text", async (ctx) => {
     });
   }
 
-  /********************* INTENCIONES *********************/
+  /*************** INTENCIONES ***************/
   const intent = await detectIntent(text, userId);
 
   if (intent === "Solicitud") {
     const ultima = await getUltimaSolicitud(userId);
-
-    await setEstado(userId, "servicio", {});
+    userState[userId] = { paso: "servicio", datos: {} };
 
     if (ultima) {
       return ctx.reply(
-        `🧠 La última vez solicitaste:\n🛠️ ${ultima.servicio}\n📅 ${ultima.fecha}\n\n¿Deseas el mismo servicio o uno diferente?`
+        `🧠 Último servicio:\n${ultima.servicio} - ${ultima.fecha}\n\n¿Qué servicio necesitas ahora?`
       );
     }
 
     return ctx.reply("¿Qué servicio necesitas?");
   }
 
-  if (intent === "ModificarSolicitud") {
-    await setEstado(userId, "modificar_id", {});
-    return ctx.reply("🔎 Indica el ID de la solicitud a modificar:");
-  }
-
-  if (intent === "CancelarSolicitud") {
-    await setEstado(userId, "cancelar_id", {});
-    return ctx.reply("🔎 Indica el ID de la solicitud a cancelar:");
-  }
-
-  if (intent === "ConsultarSolicitudes") {
-    const result = await db.query(
-      "SELECT id, servicio, fecha FROM solicitudes ORDER BY id DESC LIMIT 5"
-    );
-
-    let msg = "📋 Últimas solicitudes:\n\n";
-    result.rows.forEach((r) => {
-      msg += `🆔 ${r.id} | ${r.servicio} | ${r.fecha}\n`;
-    });
-
-    return ctx.reply(msg);
-  }
-
-  /********************* IA *********************/
+  /*************** IA ***************/
   const aiReply = await askDeepSeek(text);
   await guardarInteraccion(userId, text, aiReply);
-  return ctx.reply(aiReply);
+  ctx.reply(aiReply);
 });
 
 /******************************************************************
- * WEBHOOK + START
+ * WEBHOOK
  ******************************************************************/
 const WEBHOOK_PATH = "/telegram";
 app.post(WEBHOOK_PATH, bot.webhookCallback(WEBHOOK_PATH));
