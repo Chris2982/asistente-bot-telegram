@@ -80,7 +80,7 @@ const clearEstado = async (userId) => {
 };
 
 /******************************************************************
- * 🧠 MEMORIA POR INTENCIÓN (ÚLTIMA SOLICITUD)
+ * 🧠 MEMORIA POR INTENCIÓN
  ******************************************************************/
 const getUltimaSolicitud = async (userId) => {
   const r = await db.query(
@@ -90,8 +90,16 @@ const getUltimaSolicitud = async (userId) => {
   return r.rows[0] || null;
 };
 
+const getSolicitudesUsuario = async (userId) => {
+  const r = await db.query(
+    "SELECT servicio, fecha FROM solicitudes WHERE user_id=$1 ORDER BY id DESC LIMIT 5",
+    [userId]
+  );
+  return r.rows;
+};
+
 /******************************************************************
- * 🧠 INTENCIÓN
+ * 🧠 INTENCIÓN (Dialogflow)
  ******************************************************************/
 async function detectIntent(text, sessionId) {
   try {
@@ -112,9 +120,37 @@ async function detectIntent(text, sessionId) {
 }
 
 /******************************************************************
- * 🤖 IA
+ * 🧠 PROMPT CON CONTEXTO PARA IA
  ******************************************************************/
-async function askDeepSeek(text) {
+async function buildContextPrompt(userId, userMessage) {
+  const estado = await getEstado(userId);
+  const solicitudes = await getSolicitudesUsuario(userId);
+
+  let historial = "";
+  solicitudes.forEach((s, i) => {
+    historial += `${i + 1}. Servicio: ${s.servicio}, Fecha: ${s.fecha}\n`;
+  });
+
+  return `
+Eres el asistente virtual de un negocio que gestiona solicitudes de servicios.
+
+Historial reciente del usuario:
+${historial || "No tiene solicitudes previas."}
+
+Estado actual del usuario en el flujo: ${estado?.paso || "Ninguno"}
+
+Mensaje del usuario: "${userMessage}"
+
+Responde entendiendo el contexto del usuario, de forma breve y útil.
+`;
+}
+
+/******************************************************************
+ * 🤖 IA CON MEMORIA REAL
+ ******************************************************************/
+async function askDeepSeek(userId, text) {
+  const prompt = await buildContextPrompt(userId, text);
+
   const response = await fetch(
     "https://openrouter.ai/api/v1/chat/completions",
     {
@@ -125,7 +161,7 @@ async function askDeepSeek(text) {
       },
       body: JSON.stringify({
         model: "deepseek/deepseek-chat",
-        messages: [{ role: "user", content: text }],
+        messages: [{ role: "user", content: prompt }],
       }),
     }
   );
@@ -135,7 +171,7 @@ async function askDeepSeek(text) {
 }
 
 /******************************************************************
- * START (SALUDO CON NOMBRE)
+ * START
  ******************************************************************/
 bot.start((ctx) => {
   const nombre = ctx.from.first_name || "usuario";
@@ -155,17 +191,14 @@ bot.on("text", async (ctx) => {
   console.log("👤 Usuario:", userId);
   console.log("💬 Mensaje:", text);
 
-  /**************** SALUDO RÁPIDO ****************/
   if (lower === "hola") {
     const nombre = ctx.from.first_name || "usuario";
     return ctx.reply(`¡Hola ${nombre}! ¿En qué puedo ayudarte?`);
   }
 
-  // 1️⃣ Detectar intención
   const intent = await detectIntent(text, userId);
   console.log("🧠 Intent detectado:", intent);
 
-  // 2️⃣ Limpiar estados si es intención principal
   const intentsPrincipales = [
     "Solicitud",
     "ModificarSolicitud",
@@ -177,7 +210,6 @@ bot.on("text", async (ctx) => {
     await clearEstado(userId);
   }
 
-  // 3️⃣ Revisar estado
   const estado = await getEstado(userId);
 
   if (estado) {
@@ -204,41 +236,8 @@ bot.on("text", async (ctx) => {
         `✅ Solicitud registrada:\n🛠️ ${datos.servicio}\n📅 ${datos.fecha}`
       );
     }
-
-    if (estado.paso === "modificar_id") {
-      if (isNaN(text)) {
-        return ctx.reply("❌ Debes indicar un ID numérico.");
-      }
-      await setEstado(userId, "modificar_servicio", { id: text });
-      return ctx.reply("🛠️ Nuevo servicio:");
-    }
-
-    if (estado.paso === "modificar_servicio") {
-      datos.servicio = text;
-      await setEstado(userId, "modificar_fecha", datos);
-      return ctx.reply("📅 Nueva fecha:");
-    }
-
-    if (estado.paso === "modificar_fecha") {
-      await db.query(
-        "UPDATE solicitudes SET servicio=$1, fecha=$2 WHERE id=$3",
-        [datos.servicio, text, datos.id]
-      );
-      await clearEstado(userId);
-      return ctx.reply("✅ Solicitud modificada correctamente.");
-    }
-
-    if (estado.paso === "cancelar_id") {
-      if (isNaN(text)) {
-        return ctx.reply("❌ Debes indicar un ID numérico.");
-      }
-      await db.query("DELETE FROM solicitudes WHERE id=$1", [text]);
-      await clearEstado(userId);
-      return ctx.reply("🗑️ Solicitud cancelada.");
-    }
   }
 
-  /**************** REPORTE ****************/
   if (lower === "reporte") {
     const result = await db.query("SELECT * FROM solicitudes ORDER BY id DESC");
     const csv = stringify(result.rows, { header: true });
@@ -249,7 +248,6 @@ bot.on("text", async (ctx) => {
     });
   }
 
-  /**************** INTENTS ****************/
   if (intent === "Solicitud") {
     const ultima = await getUltimaSolicitud(userId);
     await setEstado(userId, "servicio", {});
@@ -261,16 +259,6 @@ bot.on("text", async (ctx) => {
     }
 
     return ctx.reply("¿Qué servicio necesitas?");
-  }
-
-  if (intent === "ModificarSolicitud") {
-    await setEstado(userId, "modificar_id", {});
-    return ctx.reply("🔎 Indica el ID de la solicitud a modificar:");
-  }
-
-  if (intent === "CancelarSolicitud") {
-    await setEstado(userId, "cancelar_id", {});
-    return ctx.reply("🔎 Indica el ID de la solicitud a cancelar:");
   }
 
   if (intent === "ConsultarSolicitudes") {
@@ -286,8 +274,7 @@ bot.on("text", async (ctx) => {
     return ctx.reply(msg);
   }
 
-  /**************** IA ****************/
-  const aiReply = await askDeepSeek(text);
+  const aiReply = await askDeepSeek(userId, text);
   return ctx.reply(aiReply);
 });
 
