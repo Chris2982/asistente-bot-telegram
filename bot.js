@@ -1,4 +1,4 @@
-import "dotenv/config";
+Mi niimport "dotenv/config";
 import express from "express";
 import { Telegraf } from "telegraf";
 import fetch from "node-fetch";
@@ -53,7 +53,7 @@ async function initDB() {
 }
 
 /******************************************************************
- * 🧠 ESTADO CONVERSACIONAL
+ * 🧠 ESTADO
  ******************************************************************/
 const getEstado = async (userId) => {
   const r = await db.query(
@@ -74,13 +74,11 @@ const setEstado = async (userId, paso, datos = {}) => {
 };
 
 const clearEstado = async (userId) => {
-  await db.query("DELETE FROM estados_conversacion WHERE user_id=$1", [
-    userId,
-  ]);
+  await db.query("DELETE FROM estados_conversacion WHERE user_id=$1", [userId]);
 };
 
 /******************************************************************
- * 🧠 MEMORIA POR INTENCIÓN
+ * 🧠 MEMORIA
  ******************************************************************/
 const getUltimaSolicitud = async (userId) => {
   const r = await db.query(
@@ -99,7 +97,7 @@ const getSolicitudesUsuario = async (userId) => {
 };
 
 /******************************************************************
- * 🧠 INTENCIÓN (Dialogflow)
+ * 🧠 INTENT
  ******************************************************************/
 async function detectIntent(text, sessionId) {
   try {
@@ -120,7 +118,7 @@ async function detectIntent(text, sessionId) {
 }
 
 /******************************************************************
- * 🧠 PROMPT CON CONTEXTO PARA IA
+ * 🤖 IA CON CONTEXTO
  ******************************************************************/
 async function buildContextPrompt(userId, userMessage) {
   const estado = await getEstado(userId);
@@ -132,22 +130,17 @@ async function buildContextPrompt(userId, userMessage) {
   });
 
   return `
-Eres el asistente virtual de un negocio que gestiona solicitudes de servicios.
+Eres el asistente virtual de un negocio que gestiona solicitudes.
 
-Historial reciente del usuario:
-${historial || "No tiene solicitudes previas."}
+Historial:
+${historial || "Sin historial"}
 
-Estado actual del usuario en el flujo: ${estado?.paso || "Ninguno"}
+Estado actual: ${estado?.paso || "Ninguno"}
 
-Mensaje del usuario: "${userMessage}"
-
-Responde entendiendo el contexto del usuario, de forma breve y útil.
+Mensaje: "${userMessage}"
 `;
 }
 
-/******************************************************************
- * 🤖 IA CON MEMORIA REAL
- ******************************************************************/
 async function askDeepSeek(userId, text) {
   const prompt = await buildContextPrompt(userId, text);
 
@@ -174,30 +167,27 @@ async function askDeepSeek(userId, text) {
  * START
  ******************************************************************/
 bot.start((ctx) => {
-  const nombre = ctx.from.first_name || "usuario";
-  ctx.reply(`¡Hola ${nombre}! 👋`);
+  ctx.reply(`¡Hola ${ctx.from.first_name}! 👋`);
 });
 
 /******************************************************************
  * MENSAJES
  ******************************************************************/
 bot.on("text", async (ctx) => {
-  const rawText = ctx.message.text;
-  const text = rawText.trim();
+  const text = ctx.message.text.trim();
   const lower = text.toLowerCase();
   const userId = ctx.from.id;
 
-  console.log("====================================");
-  console.log("👤 Usuario:", userId);
-  console.log("💬 Mensaje:", text);
+  console.log("👤", userId, "💬", text);
 
   if (lower === "hola") {
-    const nombre = ctx.from.first_name || "usuario";
-    return ctx.reply(`¡Hola ${nombre}! ¿En qué puedo ayudarte?`);
+    return ctx.reply(`¡Hola ${ctx.from.first_name}! ¿En qué puedo ayudarte?`);
   }
 
   const intent = await detectIntent(text, userId);
-  console.log("🧠 Intent detectado:", intent);
+  console.log("🧠 Intent:", intent);
+
+  /**************** INTENTS PRIMERO ****************/
 
   const intentsPrincipales = [
     "Solicitud",
@@ -208,7 +198,41 @@ bot.on("text", async (ctx) => {
 
   if (intentsPrincipales.includes(intent)) {
     await clearEstado(userId);
+
+    if (intent === "Solicitud") {
+      const ultima = await getUltimaSolicitud(userId);
+      await setEstado(userId, "servicio", {});
+      if (ultima) {
+        return ctx.reply(
+          `La última vez solicitaste:\n${ultima.servicio} - ${ultima.fecha}\n\n¿Qué servicio necesitas ahora?`
+        );
+      }
+      return ctx.reply("¿Qué servicio necesitas?");
+    }
+
+    if (intent === "ModificarSolicitud") {
+      await setEstado(userId, "modificar_id", {});
+      return ctx.reply("Indica el ID de la solicitud a modificar:");
+    }
+
+    if (intent === "CancelarSolicitud") {
+      await setEstado(userId, "cancelar_id", {});
+      return ctx.reply("Indica el ID de la solicitud a cancelar:");
+    }
+
+    if (intent === "ConsultarSolicitudes") {
+      const r = await db.query(
+        "SELECT id, servicio, fecha FROM solicitudes ORDER BY id DESC LIMIT 5"
+      );
+      let msg = "Últimas solicitudes:\n\n";
+      r.rows.forEach((s) => {
+        msg += `ID ${s.id} | ${s.servicio} | ${s.fecha}\n`;
+      });
+      return ctx.reply(msg);
+    }
   }
+
+  /**************** ESTADO ****************/
 
   const estado = await getEstado(userId);
 
@@ -218,64 +242,59 @@ bot.on("text", async (ctx) => {
     if (estado.paso === "servicio") {
       datos.servicio = text;
       await setEstado(userId, "fecha", datos);
-      return ctx.reply("📅 ¿Para qué fecha necesitas el servicio?");
+      return ctx.reply("¿Para qué fecha?");
     }
 
     if (estado.paso === "fecha") {
-      datos.fecha = text;
-
       await db.query(
         "INSERT INTO solicitudes (user_id, servicio, fecha) VALUES ($1,$2,$3)",
-        [userId, datos.servicio, datos.fecha]
+        [userId, datos.servicio, text]
       );
-
-      console.log("✅ Solicitud guardada:", datos);
-
       await clearEstado(userId);
-      return ctx.reply(
-        `✅ Solicitud registrada:\n🛠️ ${datos.servicio}\n📅 ${datos.fecha}`
+      return ctx.reply("Solicitud registrada correctamente ✅");
+    }
+
+    if (estado.paso === "modificar_id") {
+      await setEstado(userId, "modificar_servicio", { id: text });
+      return ctx.reply("Nuevo servicio:");
+    }
+
+    if (estado.paso === "modificar_servicio") {
+      datos.servicio = text;
+      await setEstado(userId, "modificar_fecha", datos);
+      return ctx.reply("Nueva fecha:");
+    }
+
+    if (estado.paso === "modificar_fecha") {
+      await db.query(
+        "UPDATE solicitudes SET servicio=$1, fecha=$2 WHERE id=$3",
+        [datos.servicio, text, datos.id]
       );
+      await clearEstado(userId);
+      return ctx.reply("Solicitud modificada ✅");
+    }
+
+    if (estado.paso === "cancelar_id") {
+      await db.query("DELETE FROM solicitudes WHERE id=$1", [text]);
+      await clearEstado(userId);
+      return ctx.reply("Solicitud cancelada 🗑️");
     }
   }
 
-  if (lower === "reporte") {
-    const result = await db.query("SELECT * FROM solicitudes ORDER BY id DESC");
-    const csv = stringify(result.rows, { header: true });
+  /**************** REPORTE ****************/
 
+  if (lower === "reporte") {
+    const r = await db.query("SELECT * FROM solicitudes");
+    const csv = stringify(r.rows, { header: true });
     return ctx.replyWithDocument({
       source: Buffer.from(csv),
       filename: "reporte.csv",
     });
   }
 
-  if (intent === "Solicitud") {
-    const ultima = await getUltimaSolicitud(userId);
-    await setEstado(userId, "servicio", {});
-
-    if (ultima) {
-      return ctx.reply(
-        `🧠 La última vez solicitaste:\n🛠️ ${ultima.servicio}\n📅 ${ultima.fecha}\n\n¿Deseas el mismo servicio o uno diferente?`
-      );
-    }
-
-    return ctx.reply("¿Qué servicio necesitas?");
-  }
-
-  if (intent === "ConsultarSolicitudes") {
-    const result = await db.query(
-      "SELECT id, servicio, fecha FROM solicitudes ORDER BY id DESC LIMIT 5"
-    );
-
-    let msg = "📋 Últimas solicitudes:\n\n";
-    result.rows.forEach((r) => {
-      msg += `🆔 ${r.id} | ${r.servicio} | ${r.fecha}\n`;
-    });
-
-    return ctx.reply(msg);
-  }
-
-  const aiReply = await askDeepSeek(userId, text);
-  return ctx.reply(aiReply);
+  /**************** IA ****************/
+  const ai = await askDeepSeek(userId, text);
+  return ctx.reply(ai);
 });
 
 /******************************************************************
