@@ -1,4 +1,4 @@
-Mi niimport "dotenv/config";
+import "dotenv/config";
 import express from "express";
 import { Telegraf } from "telegraf";
 import fetch from "node-fetch";
