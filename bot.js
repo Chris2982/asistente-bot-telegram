@@ -36,20 +36,28 @@ async function initDB() {
   await db.query(`
     CREATE TABLE IF NOT EXISTS empresas (
       id SERIAL PRIMARY KEY,
-      nombre TEXT,
-      codigo TEXT UNIQUE
+      nombre TEXT
     );
+  `);
+
+  await db.query(`
+    ALTER TABLE empresas
+    ADD COLUMN IF NOT EXISTS codigo TEXT;
   `);
 
   await db.query(`
     CREATE TABLE IF NOT EXISTS solicitudes (
       id SERIAL PRIMARY KEY,
       user_id BIGINT,
-      empresa_id INTEGER,
       servicio TEXT,
       fecha TEXT,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
+  `);
+
+  await db.query(`
+    ALTER TABLE solicitudes
+    ADD COLUMN IF NOT EXISTS empresa_id INTEGER;
   `);
 
   await db.query(`
@@ -60,6 +68,7 @@ async function initDB() {
       updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
   `);
+
 }
 
 /******************************************************************
