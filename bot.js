@@ -32,10 +32,20 @@ const dfClient = new dialogflow.SessionsClient();
  * 🗄️ TABLAS
  ******************************************************************/
 async function initDB() {
+
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS empresas (
+      id SERIAL PRIMARY KEY,
+      nombre TEXT,
+      codigo TEXT UNIQUE
+    );
+  `);
+
   await db.query(`
     CREATE TABLE IF NOT EXISTS solicitudes (
       id SERIAL PRIMARY KEY,
       user_id BIGINT,
+      empresa_id INTEGER,
       servicio TEXT,
       fecha TEXT,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -80,18 +90,18 @@ const clearEstado = async (userId) => {
 /******************************************************************
  * 🧠 MEMORIA
  ******************************************************************/
-const getUltimaSolicitud = async (userId) => {
+const getUltimaSolicitud = async (userId, empresaId) => {
   const r = await db.query(
-    "SELECT servicio, fecha FROM solicitudes WHERE user_id=$1 ORDER BY id DESC LIMIT 1",
-    [userId]
+    "SELECT servicio, fecha FROM solicitudes WHERE user_id=$1 AND empresa_id=$2 ORDER BY id DESC LIMIT 1",
+    [userId, empresaId]
   );
   return r.rows[0] || null;
 };
 
-const getSolicitudesUsuario = async (userId) => {
+const getSolicitudesUsuario = async (userId, empresaId) => {
   const r = await db.query(
-    "SELECT servicio, fecha FROM solicitudes WHERE user_id=$1 ORDER BY id DESC LIMIT 5",
-    [userId]
+    "SELECT servicio, fecha FROM solicitudes WHERE user_id=$1 AND empresa_id=$2 ORDER BY id DESC LIMIT 5",
+    [userId, empresaId]
   );
   return r.rows;
 };
@@ -101,6 +111,7 @@ const getSolicitudesUsuario = async (userId) => {
  ******************************************************************/
 async function detectIntent(text, sessionId) {
   try {
+
     const sessionPath = dfClient.projectAgentSessionPath(
       DF_PROJECT_ID,
       sessionId.toString()
@@ -112,6 +123,7 @@ async function detectIntent(text, sessionId) {
     });
 
     return response.queryResult.intent?.displayName || "fallback";
+
   } catch {
     return "fallback";
   }
@@ -120,11 +132,13 @@ async function detectIntent(text, sessionId) {
 /******************************************************************
  * 🤖 IA CON CONTEXTO
  ******************************************************************/
-async function buildContextPrompt(userId, userMessage) {
+async function buildContextPrompt(userId, empresaId, userMessage) {
+
   const estado = await getEstado(userId);
-  const solicitudes = await getSolicitudesUsuario(userId);
+  const solicitudes = await getSolicitudesUsuario(userId, empresaId);
 
   let historial = "";
+
   solicitudes.forEach((s, i) => {
     historial += `${i + 1}. Servicio: ${s.servicio}, Fecha: ${s.fecha}\n`;
   });
@@ -141,8 +155,9 @@ Mensaje: "${userMessage}"
 `;
 }
 
-async function askDeepSeek(userId, text) {
-  const prompt = await buildContextPrompt(userId, text);
+async function askDeepSeek(userId, empresaId, text) {
+
+  const prompt = await buildContextPrompt(userId, empresaId, text);
 
   const response = await fetch(
     "https://openrouter.ai/api/v1/chat/completions",
@@ -160,34 +175,101 @@ async function askDeepSeek(userId, text) {
   );
 
   const data = await response.json();
+
   return data.choices?.[0]?.message?.content || "No pude responder.";
 }
 
 /******************************************************************
+ * EMPRESAS
+ ******************************************************************/
+async function mostrarEmpresas(ctx) {
+
+  const r = await db.query("SELECT id,nombre FROM empresas");
+
+  if (r.rows.length === 0) {
+    return ctx.reply("No hay empresas registradas.");
+  }
+
+  const botones = r.rows.map(e => ({
+    text: e.nombre,
+    callback_data: "empresa_" + e.id
+  }));
+
+  return ctx.reply("Selecciona una empresa:", {
+    reply_markup: {
+      inline_keyboard: botones.map(b => [b])
+    }
+  });
+}
+
+bot.action(/empresa_(.+)/, async (ctx) => {
+
+  const empresaId = ctx.match[1];
+  const userId = ctx.from.id;
+
+  await setEstado(userId, "empresa_seleccionada", { empresa_id: empresaId });
+
+  await ctx.answerCbQuery();
+
+  ctx.reply("✅ Empresa seleccionada. Ahora puedes solicitar servicios.");
+
+});
+
+/******************************************************************
  * START
  ******************************************************************/
-bot.start((ctx) => {
+bot.start(async (ctx) => {
+
   ctx.reply(`¡Hola ${ctx.from.first_name}! 👋`);
+
+  await mostrarEmpresas(ctx);
+
 });
 
 /******************************************************************
  * MENSAJES
  ******************************************************************/
 bot.on("text", async (ctx) => {
+
   const text = ctx.message.text.trim();
   const lower = text.toLowerCase();
   const userId = ctx.from.id;
 
   console.log("👤", userId, "💬", text);
 
+  /************* CREAR EMPRESA (ADMIN PRUEBAS) *************/
+
+  if (text.startsWith("/crear_empresa")) {
+
+    const partes = text.split(" ");
+    const nombre = partes[1];
+    const codigo = partes[2];
+
+    await db.query(
+      "INSERT INTO empresas (nombre,codigo) VALUES ($1,$2)",
+      [nombre, codigo]
+    );
+
+    return ctx.reply("Empresa registrada ✅");
+
+  }
+
+  const estadoEmpresa = await getEstado(userId);
+  const empresaId = estadoEmpresa?.datos?.empresa_id;
+
+  if (!empresaId) {
+    return mostrarEmpresas(ctx);
+  }
+
   if (lower === "hola") {
     return ctx.reply(`¡Hola ${ctx.from.first_name}! ¿En qué puedo ayudarte?`);
   }
 
   const intent = await detectIntent(text, userId);
+
   console.log("🧠 Intent:", intent);
 
-  /**************** INTENTS PRIMERO ****************/
+  /**************** INTENTS ****************/
 
   const intentsPrincipales = [
     "Solicitud",
@@ -197,37 +279,49 @@ bot.on("text", async (ctx) => {
   ];
 
   if (intentsPrincipales.includes(intent)) {
+
     await clearEstado(userId);
 
+    await setEstado(userId, "empresa_seleccionada", { empresa_id: empresaId });
+
     if (intent === "Solicitud") {
-      const ultima = await getUltimaSolicitud(userId);
-      await setEstado(userId, "servicio", {});
+
+      const ultima = await getUltimaSolicitud(userId, empresaId);
+
+      await setEstado(userId, "servicio", { empresa_id: empresaId });
+
       if (ultima) {
         return ctx.reply(
           `La última vez solicitaste:\n${ultima.servicio} - ${ultima.fecha}\n\n¿Qué servicio necesitas ahora?`
         );
       }
+
       return ctx.reply("¿Qué servicio necesitas?");
     }
 
     if (intent === "ModificarSolicitud") {
-      await setEstado(userId, "modificar_id", {});
+      await setEstado(userId, "modificar_id", { empresa_id: empresaId });
       return ctx.reply("Indica el ID de la solicitud a modificar:");
     }
 
     if (intent === "CancelarSolicitud") {
-      await setEstado(userId, "cancelar_id", {});
+      await setEstado(userId, "cancelar_id", { empresa_id: empresaId });
       return ctx.reply("Indica el ID de la solicitud a cancelar:");
     }
 
     if (intent === "ConsultarSolicitudes") {
+
       const r = await db.query(
-        "SELECT id, servicio, fecha FROM solicitudes ORDER BY id DESC LIMIT 5"
+        "SELECT id, servicio, fecha FROM solicitudes WHERE empresa_id=$1 ORDER BY id DESC LIMIT 5",
+        [empresaId]
       );
+
       let msg = "Últimas solicitudes:\n\n";
+
       r.rows.forEach((s) => {
         msg += `ID ${s.id} | ${s.servicio} | ${s.fecha}\n`;
       });
+
       return ctx.reply(msg);
     }
   }
@@ -237,46 +331,73 @@ bot.on("text", async (ctx) => {
   const estado = await getEstado(userId);
 
   if (estado) {
+
     const datos = estado.datos || {};
 
     if (estado.paso === "servicio") {
+
       datos.servicio = text;
+
       await setEstado(userId, "fecha", datos);
+
       return ctx.reply("¿Para qué fecha?");
     }
 
     if (estado.paso === "fecha") {
+
       await db.query(
-        "INSERT INTO solicitudes (user_id, servicio, fecha) VALUES ($1,$2,$3)",
-        [userId, datos.servicio, text]
+        "INSERT INTO solicitudes (user_id,empresa_id,servicio,fecha) VALUES ($1,$2,$3,$4)",
+        [userId, empresaId, datos.servicio, text]
       );
+
       await clearEstado(userId);
+
+      await setEstado(userId, "empresa_seleccionada", { empresa_id: empresaId });
+
       return ctx.reply("Solicitud registrada correctamente ✅");
     }
 
     if (estado.paso === "modificar_id") {
-      await setEstado(userId, "modificar_servicio", { id: text });
+
+      await setEstado(userId, "modificar_servicio", { id: text, empresa_id: empresaId });
+
       return ctx.reply("Nuevo servicio:");
     }
 
     if (estado.paso === "modificar_servicio") {
+
       datos.servicio = text;
+
       await setEstado(userId, "modificar_fecha", datos);
+
       return ctx.reply("Nueva fecha:");
     }
 
     if (estado.paso === "modificar_fecha") {
+
       await db.query(
-        "UPDATE solicitudes SET servicio=$1, fecha=$2 WHERE id=$3",
-        [datos.servicio, text, datos.id]
+        "UPDATE solicitudes SET servicio=$1, fecha=$2 WHERE id=$3 AND empresa_id=$4",
+        [datos.servicio, text, datos.id, empresaId]
       );
+
       await clearEstado(userId);
+
+      await setEstado(userId, "empresa_seleccionada", { empresa_id: empresaId });
+
       return ctx.reply("Solicitud modificada ✅");
     }
 
     if (estado.paso === "cancelar_id") {
-      await db.query("DELETE FROM solicitudes WHERE id=$1", [text]);
+
+      await db.query(
+        "DELETE FROM solicitudes WHERE id=$1 AND empresa_id=$2",
+        [text, empresaId]
+      );
+
       await clearEstado(userId);
+
+      await setEstado(userId, "empresa_seleccionada", { empresa_id: empresaId });
+
       return ctx.reply("Solicitud cancelada 🗑️");
     }
   }
@@ -284,8 +405,14 @@ bot.on("text", async (ctx) => {
   /**************** REPORTE ****************/
 
   if (lower === "reporte") {
-    const r = await db.query("SELECT * FROM solicitudes");
+
+    const r = await db.query(
+      "SELECT * FROM solicitudes WHERE empresa_id=$1",
+      [empresaId]
+    );
+
     const csv = stringify(r.rows, { header: true });
+
     return ctx.replyWithDocument({
       source: Buffer.from(csv),
       filename: "reporte.csv",
@@ -293,19 +420,26 @@ bot.on("text", async (ctx) => {
   }
 
   /**************** IA ****************/
-  const ai = await askDeepSeek(userId, text);
+
+  const ai = await askDeepSeek(userId, empresaId, text);
+
   return ctx.reply(ai);
+
 });
 
 /******************************************************************
  * WEBHOOK
  ******************************************************************/
 const WEBHOOK_PATH = "/telegram";
+
 app.post(WEBHOOK_PATH, bot.webhookCallback(WEBHOOK_PATH));
 
 async function start() {
+
   await initDB();
+
   app.listen(PORT);
+
 }
 
 start();
