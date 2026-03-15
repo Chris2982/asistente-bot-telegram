@@ -302,16 +302,21 @@ Código: ${codigo}`);
 
   if (lower === "/ver_empresas") {
 
-    const r = await db.query("SELECT id,nombre,codigo FROM empresas");
-
+    const r = await db.query("SELECT id,nombre,codigo,telegram_id FROM empresas");
+  
     let msg = "🏢 Empresas registradas\n\n";
-
+  
     r.rows.forEach(e => {
-      msg += `ID:${e.id}\nNombre:${e.nombre}\nCódigo:${e.codigo}\n\n`;
+      msg += `ID:${e.id}
+  Nombre:${e.nombre}
+  Código:${e.codigo}
+  Telegram:${e.telegram_id}
+  
+  `;
     });
-
+  
     return ctx.reply(msg);
-
+  
   }
 
   if (text.startsWith("/soy_empresa")) {
