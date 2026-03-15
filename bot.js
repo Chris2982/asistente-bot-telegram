@@ -227,6 +227,29 @@ bot.action(/empresa_(.+)/, async (ctx) => {
 });
 
 /******************************************************************
+ * RESPUESTA EMPRESA
+ ******************************************************************/
+bot.action(/aceptar_(.+)/, async (ctx) => {
+
+  const solicitudId = ctx.match[1];
+
+  await ctx.answerCbQuery("Solicitud aceptada");
+
+  ctx.editMessageText(`✅ Solicitud ${solicitudId} aceptada`);
+
+});
+
+bot.action(/rechazar_(.+)/, async (ctx) => {
+
+  const solicitudId = ctx.match[1];
+
+  await ctx.answerCbQuery("Solicitud rechazada");
+
+  ctx.editMessageText(`❌ Solicitud ${solicitudId} rechazada`);
+
+});
+
+/******************************************************************
  * START
  ******************************************************************/
 bot.start(async (ctx) => {
@@ -282,14 +305,6 @@ Código: ${codigo}`);
 
   }
 
-  if (lower === "/reset_empresa") {
-
-    await clearEstado(userId);
-
-    return mostrarEmpresas(ctx);
-
-  }
-
   if (text.startsWith("/soy_empresa")) {
 
     const partes = text.split(" ");
@@ -315,6 +330,14 @@ Código: ${codigo}`);
 
   }
 
+  if (lower === "/reset_empresa") {
+
+    await clearEstado(userId);
+
+    return mostrarEmpresas(ctx);
+
+  }
+
   /**************** EMPRESA ****************/
 
   const estadoEmpresa = await getEstado(userId);
@@ -328,47 +351,86 @@ Código: ${codigo}`);
 
   const intent = await detectIntent(text, userId);
 
-  const intentsPrincipales = [
-    "Solicitud",
-    "ModificarSolicitud",
-    "CancelarSolicitud",
-    "ConsultarSolicitudes",
-  ];
+  if (intent === "Solicitud") {
 
-  if (intentsPrincipales.includes(intent)) {
+    const ultima = await getUltimaSolicitud(userId, empresaId);
 
-    await clearEstado(userId);
-    await setEstado(userId, "empresa_seleccionada", { empresa_id: empresaId });
+    await setEstado(userId, "servicio", { empresa_id: empresaId });
 
-    if (intent === "Solicitud") {
+    if (ultima) {
+      return ctx.reply(
+        `La última vez solicitaste:\n${ultima.servicio} - ${ultima.fecha}
 
-      const ultima = await getUltimaSolicitud(userId, empresaId);
-
-      await setEstado(userId, "servicio", { empresa_id: empresaId });
-
-      if (ultima) {
-        return ctx.reply(
-          `La última vez solicitaste:\n${ultima.servicio} - ${ultima.fecha}\n\n¿Qué servicio necesitas ahora?`
-        );
-      }
-
-      return ctx.reply("¿Qué servicio necesitas?");
+¿Qué servicio necesitas ahora?`
+      );
     }
 
-    if (intent === "ConsultarSolicitudes") {
+    return ctx.reply("¿Qué servicio necesitas?");
+  }
 
-      const r = await db.query(
-        "SELECT id, servicio, fecha FROM solicitudes WHERE empresa_id=$1 ORDER BY id DESC LIMIT 5",
+  /**************** ESTADOS ****************/
+
+  const estado = await getEstado(userId);
+
+  if (estado) {
+
+    const datos = estado.datos || {};
+
+    if (estado.paso === "servicio") {
+
+      datos.servicio = text;
+
+      await setEstado(userId, "fecha", datos);
+
+      return ctx.reply("¿Para qué fecha necesitas el servicio?");
+    }
+
+    if (estado.paso === "fecha") {
+
+      const result = await db.query(
+        "INSERT INTO solicitudes (user_id,empresa_id,servicio,fecha) VALUES ($1,$2,$3,$4) RETURNING id",
+        [userId, empresaId, datos.servicio, text]
+      );
+
+      const solicitudId = result.rows[0].id;
+
+      const empresa = await db.query(
+        "SELECT nombre,telegram_id FROM empresas WHERE id=$1",
         [empresaId]
       );
 
-      let msg = "Últimas solicitudes:\n\n";
+      const empresaData = empresa.rows[0];
 
-      r.rows.forEach((s) => {
-        msg += `ID ${s.id} | ${s.servicio} | ${s.fecha}\n`;
-      });
+      if (empresaData?.telegram_id) {
 
-      return ctx.reply(msg);
+        await bot.telegram.sendMessage(
+          empresaData.telegram_id,
+          `📩 Nueva solicitud
+
+Empresa: ${empresaData.nombre}
+Servicio: ${datos.servicio}
+Fecha: ${text}
+Cliente ID: ${userId}
+ID Solicitud: ${solicitudId}`,
+          {
+            reply_markup: {
+              inline_keyboard: [
+                [
+                  { text: "✅ Aceptar", callback_data: `aceptar_${solicitudId}` },
+                  { text: "❌ Rechazar", callback_data: `rechazar_${solicitudId}` }
+                ]
+              ]
+            }
+          }
+        );
+
+      }
+
+      await clearEstado(userId);
+
+      await setEstado(userId, "empresa_seleccionada", { empresa_id: empresaId });
+
+      return ctx.reply("✅ Solicitud registrada correctamente");
     }
 
   }
