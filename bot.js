@@ -36,10 +36,18 @@ async function initDB() {
   await db.query(`
     CREATE TABLE IF NOT EXISTS empresas (
       id SERIAL PRIMARY KEY,
-      nombre TEXT,
-      codigo TEXT,
-      telegram_id BIGINT
+      nombre TEXT
     );
+  `);
+
+  await db.query(`
+    ALTER TABLE empresas
+    ADD COLUMN IF NOT EXISTS codigo TEXT;
+  `);
+
+  await db.query(`
+    ALTER TABLE empresas
+    ADD COLUMN IF NOT EXISTS telegram_id BIGINT;
   `);
 
   await db.query(`
@@ -61,6 +69,7 @@ async function initDB() {
       updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
   `);
+
 }
 
 /******************************************************************
