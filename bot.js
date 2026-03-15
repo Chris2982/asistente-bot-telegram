@@ -9,7 +9,7 @@ import { stringify } from "csv-stringify/sync";
 const { Pool } = pkg;
 
 /******************************************************************
- * ⚙️ VARIABLES
+ * VARIABLES
  ******************************************************************/
 const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN;
 const DEEPSEEK_API_KEY = process.env.DEEPSEEK_API_KEY;
@@ -29,35 +29,28 @@ const bot = new Telegraf(TELEGRAM_TOKEN);
 const dfClient = new dialogflow.SessionsClient();
 
 /******************************************************************
- * 🗄️ TABLAS
+ * TABLAS
  ******************************************************************/
 async function initDB() {
 
   await db.query(`
     CREATE TABLE IF NOT EXISTS empresas (
       id SERIAL PRIMARY KEY,
-      nombre TEXT
+      nombre TEXT,
+      codigo TEXT,
+      telegram_id BIGINT
     );
-  `);
-
-  await db.query(`
-    ALTER TABLE empresas
-    ADD COLUMN IF NOT EXISTS codigo TEXT;
   `);
 
   await db.query(`
     CREATE TABLE IF NOT EXISTS solicitudes (
       id SERIAL PRIMARY KEY,
       user_id BIGINT,
+      empresa_id INTEGER,
       servicio TEXT,
       fecha TEXT,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
-  `);
-
-  await db.query(`
-    ALTER TABLE solicitudes
-    ADD COLUMN IF NOT EXISTS empresa_id INTEGER;
   `);
 
   await db.query(`
@@ -68,11 +61,10 @@ async function initDB() {
       updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
   `);
-
 }
 
 /******************************************************************
- * 🧠 ESTADO
+ * ESTADO
  ******************************************************************/
 const getEstado = async (userId) => {
   const r = await db.query(
@@ -97,7 +89,7 @@ const clearEstado = async (userId) => {
 };
 
 /******************************************************************
- * 🧠 MEMORIA
+ * MEMORIA
  ******************************************************************/
 const getUltimaSolicitud = async (userId, empresaId) => {
   const r = await db.query(
@@ -116,9 +108,10 @@ const getSolicitudesUsuario = async (userId, empresaId) => {
 };
 
 /******************************************************************
- * 🧠 INTENT
+ * INTENT
  ******************************************************************/
 async function detectIntent(text, sessionId) {
+
   try {
 
     const sessionPath = dfClient.projectAgentSessionPath(
@@ -134,12 +127,14 @@ async function detectIntent(text, sessionId) {
     return response.queryResult.intent?.displayName || "fallback";
 
   } catch {
+
     return "fallback";
+
   }
 }
 
 /******************************************************************
- * 🤖 IA CON CONTEXTO
+ * IA
  ******************************************************************/
 async function buildContextPrompt(userId, empresaId, userMessage) {
 
@@ -216,11 +211,18 @@ bot.action(/empresa_(.+)/, async (ctx) => {
   const empresaId = ctx.match[1];
   const userId = ctx.from.id;
 
+  const r = await db.query(
+    "SELECT nombre FROM empresas WHERE id=$1",
+    [empresaId]
+  );
+
+  const nombre = r.rows[0]?.nombre || "Empresa";
+
   await setEstado(userId, "empresa_seleccionada", { empresa_id: empresaId });
 
   await ctx.answerCbQuery();
 
-  ctx.reply("✅ Empresa seleccionada. Ahora puedes solicitar servicios.");
+  ctx.reply(`🏢 Empresa seleccionada: ${nombre}\n\nAhora puedes solicitar servicios.`);
 
 });
 
@@ -246,7 +248,7 @@ bot.on("text", async (ctx) => {
 
   console.log("👤", userId, "💬", text);
 
-  /************* CREAR EMPRESA (ADMIN PRUEBAS) *************/
+  /**************** COMANDOS ****************/
 
   if (text.startsWith("/crear_empresa")) {
 
@@ -259,9 +261,61 @@ bot.on("text", async (ctx) => {
       [nombre, codigo]
     );
 
-    return ctx.reply("Empresa registrada ✅");
+    return ctx.reply(`✅ Empresa registrada
+
+Nombre: ${nombre}
+Código: ${codigo}`);
 
   }
+
+  if (lower === "/ver_empresas") {
+
+    const r = await db.query("SELECT id,nombre,codigo FROM empresas");
+
+    let msg = "🏢 Empresas registradas\n\n";
+
+    r.rows.forEach(e => {
+      msg += `ID:${e.id}\nNombre:${e.nombre}\nCódigo:${e.codigo}\n\n`;
+    });
+
+    return ctx.reply(msg);
+
+  }
+
+  if (lower === "/reset_empresa") {
+
+    await clearEstado(userId);
+
+    return mostrarEmpresas(ctx);
+
+  }
+
+  if (text.startsWith("/soy_empresa")) {
+
+    const partes = text.split(" ");
+    const codigo = partes[1];
+
+    const r = await db.query(
+      "SELECT id,nombre FROM empresas WHERE codigo=$1",
+      [codigo]
+    );
+
+    if (r.rows.length === 0) {
+      return ctx.reply("Código de empresa no válido.");
+    }
+
+    const empresa = r.rows[0];
+
+    await db.query(
+      "UPDATE empresas SET telegram_id=$1 WHERE id=$2",
+      [userId, empresa.id]
+    );
+
+    return ctx.reply(`✅ Ahora eres la empresa: ${empresa.nombre}`);
+
+  }
+
+  /**************** EMPRESA ****************/
 
   const estadoEmpresa = await getEstado(userId);
   const empresaId = estadoEmpresa?.datos?.empresa_id;
@@ -270,15 +324,9 @@ bot.on("text", async (ctx) => {
     return mostrarEmpresas(ctx);
   }
 
-  if (lower === "hola") {
-    return ctx.reply(`¡Hola ${ctx.from.first_name}! ¿En qué puedo ayudarte?`);
-  }
+  /**************** INTENT ****************/
 
   const intent = await detectIntent(text, userId);
-
-  console.log("🧠 Intent:", intent);
-
-  /**************** INTENTS ****************/
 
   const intentsPrincipales = [
     "Solicitud",
@@ -290,7 +338,6 @@ bot.on("text", async (ctx) => {
   if (intentsPrincipales.includes(intent)) {
 
     await clearEstado(userId);
-
     await setEstado(userId, "empresa_seleccionada", { empresa_id: empresaId });
 
     if (intent === "Solicitud") {
@@ -308,16 +355,6 @@ bot.on("text", async (ctx) => {
       return ctx.reply("¿Qué servicio necesitas?");
     }
 
-    if (intent === "ModificarSolicitud") {
-      await setEstado(userId, "modificar_id", { empresa_id: empresaId });
-      return ctx.reply("Indica el ID de la solicitud a modificar:");
-    }
-
-    if (intent === "CancelarSolicitud") {
-      await setEstado(userId, "cancelar_id", { empresa_id: empresaId });
-      return ctx.reply("Indica el ID de la solicitud a cancelar:");
-    }
-
     if (intent === "ConsultarSolicitudes") {
 
       const r = await db.query(
@@ -333,99 +370,7 @@ bot.on("text", async (ctx) => {
 
       return ctx.reply(msg);
     }
-  }
 
-  /**************** ESTADO ****************/
-
-  const estado = await getEstado(userId);
-
-  if (estado) {
-
-    const datos = estado.datos || {};
-
-    if (estado.paso === "servicio") {
-
-      datos.servicio = text;
-
-      await setEstado(userId, "fecha", datos);
-
-      return ctx.reply("¿Para qué fecha?");
-    }
-
-    if (estado.paso === "fecha") {
-
-      await db.query(
-        "INSERT INTO solicitudes (user_id,empresa_id,servicio,fecha) VALUES ($1,$2,$3,$4)",
-        [userId, empresaId, datos.servicio, text]
-      );
-
-      await clearEstado(userId);
-
-      await setEstado(userId, "empresa_seleccionada", { empresa_id: empresaId });
-
-      return ctx.reply("Solicitud registrada correctamente ✅");
-    }
-
-    if (estado.paso === "modificar_id") {
-
-      await setEstado(userId, "modificar_servicio", { id: text, empresa_id: empresaId });
-
-      return ctx.reply("Nuevo servicio:");
-    }
-
-    if (estado.paso === "modificar_servicio") {
-
-      datos.servicio = text;
-
-      await setEstado(userId, "modificar_fecha", datos);
-
-      return ctx.reply("Nueva fecha:");
-    }
-
-    if (estado.paso === "modificar_fecha") {
-
-      await db.query(
-        "UPDATE solicitudes SET servicio=$1, fecha=$2 WHERE id=$3 AND empresa_id=$4",
-        [datos.servicio, text, datos.id, empresaId]
-      );
-
-      await clearEstado(userId);
-
-      await setEstado(userId, "empresa_seleccionada", { empresa_id: empresaId });
-
-      return ctx.reply("Solicitud modificada ✅");
-    }
-
-    if (estado.paso === "cancelar_id") {
-
-      await db.query(
-        "DELETE FROM solicitudes WHERE id=$1 AND empresa_id=$2",
-        [text, empresaId]
-      );
-
-      await clearEstado(userId);
-
-      await setEstado(userId, "empresa_seleccionada", { empresa_id: empresaId });
-
-      return ctx.reply("Solicitud cancelada 🗑️");
-    }
-  }
-
-  /**************** REPORTE ****************/
-
-  if (lower === "reporte") {
-
-    const r = await db.query(
-      "SELECT * FROM solicitudes WHERE empresa_id=$1",
-      [empresaId]
-    );
-
-    const csv = stringify(r.rows, { header: true });
-
-    return ctx.replyWithDocument({
-      source: Buffer.from(csv),
-      filename: "reporte.csv",
-    });
   }
 
   /**************** IA ****************/
