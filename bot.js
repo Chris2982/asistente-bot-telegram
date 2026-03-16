@@ -389,6 +389,36 @@ return ctx.reply("Empresa vinculada");
 
 }
 
+if (text.toLowerCase() === "reporte") {
+
+  const estadoEmpresa = await getEstado(userId);
+  const empresaId = estadoEmpresa?.datos?.empresa_id;
+
+  if (!empresaId) {
+    return ctx.reply("Primero selecciona una empresa.");
+  }
+
+  const r = await db.query(
+    "SELECT id, servicio, fecha, user_id, created_at FROM solicitudes WHERE empresa_id=$1 ORDER BY id DESC",
+    [empresaId]
+  );
+
+  if (r.rows.length === 0) {
+    return ctx.reply("No hay solicitudes para generar reporte.");
+  }
+
+  const csv = stringify(r.rows, {
+    header: true,
+    columns: ["id", "servicio", "fecha", "user_id", "created_at"],
+  });
+
+  return ctx.replyWithDocument({
+    source: Buffer.from(csv),
+    filename: "reporte_solicitudes.csv",
+  });
+
+}
+
 /**************** EMPRESA ****************/
 
 const estadoEmpresa = await getEstado(userId);
