@@ -432,6 +432,7 @@ return mostrarEmpresas(ctx);
 
 const intent = await detectIntent(text,userId);
 
+console.log ("🎯 Intent:",intent);
 if(intent==="Solicitud"){
 
 await setEstado(userId,"servicio",{empresa_id:empresaId});
