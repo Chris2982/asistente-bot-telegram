@@ -235,9 +235,7 @@ bot.action(/empresa_(.+)/, async (ctx) => {
 
 });
 
-/******************************************************************
- * RESPUESTA EMPRESA
- ******************************************************************/
+
 /******************************************************************
  * RESPUESTA EMPRESA
  ******************************************************************/
@@ -450,23 +448,119 @@ Código: ${codigo}`);
 
   const intent = await detectIntent(text, userId);
 
-  if (intent === "Solicitud") {
-
-    const ultima = await getUltimaSolicitud(userId, empresaId);
-
-    await setEstado(userId, "servicio", { empresa_id: empresaId });
-
-    if (ultima) {
+  const intentsPrincipales = [
+    "Solicitud",
+    "ModificarSolicitud",
+    "CancelarSolicitud",
+    "ConsultarSolicitudes"
+  ];
+  
+  if (intentsPrincipales.includes(intent)) {
+  
+    await clearEstado(userId);
+    await setEstado(userId, "empresa_seleccionada", { empresa_id: empresaId });
+  
+    /**************** NUEVA SOLICITUD ****************/
+  
+    if (intent === "Solicitud") {
+  
+      const ultima = await getUltimaSolicitud(userId, empresaId);
+  
+      await setEstado(userId, "servicio", { empresa_id: empresaId });
+  
+      if (ultima) {
+        return ctx.reply(
+          `La última vez solicitaste:
+  ${ultima.servicio} - ${ultima.fecha}
+  
+  ¿Qué servicio necesitas ahora?`
+        );
+      }
+  
+      return ctx.reply("¿Qué servicio necesitas?");
+    }
+  
+    /**************** CONSULTAR ****************/
+  
+    if (intent === "ConsultarSolicitudes") {
+  
+      const r = await db.query(
+        "SELECT id, servicio, fecha FROM solicitudes WHERE user_id=$1 AND empresa_id=$2 ORDER BY id DESC LIMIT 5",
+        [userId, empresaId]
+      );
+  
+      if (r.rows.length === 0) {
+        return ctx.reply("No tienes solicitudes registradas.");
+      }
+  
+      let msg = "📋 Tus últimas solicitudes:\n\n";
+  
+      r.rows.forEach(s => {
+        msg += `ID ${s.id}
+  Servicio: ${s.servicio}
+  Fecha: ${s.fecha}
+  
+  `;
+      });
+  
+      return ctx.reply(msg);
+    }
+  
+    /**************** CANCELAR ****************/
+  
+    if (intent === "CancelarSolicitud") {
+  
+      const r = await db.query(
+        "SELECT id, servicio FROM solicitudes WHERE user_id=$1 AND empresa_id=$2 ORDER BY id DESC LIMIT 1",
+        [userId, empresaId]
+      );
+  
+      if (r.rows.length === 0) {
+        return ctx.reply("No tienes solicitudes para cancelar.");
+      }
+  
+      const solicitud = r.rows[0];
+  
+      await db.query(
+        "DELETE FROM solicitudes WHERE id=$1",
+        [solicitud.id]
+      );
+  
+      return ctx.reply(`❌ Solicitud cancelada:
+  
+  ${solicitud.servicio}`);
+    }
+  
+    /**************** MODIFICAR ****************/
+  
+    if (intent === "ModificarSolicitud") {
+  
+      const r = await db.query(
+        "SELECT id, servicio, fecha FROM solicitudes WHERE user_id=$1 AND empresa_id=$2 ORDER BY id DESC LIMIT 1",
+        [userId, empresaId]
+      );
+  
+      if (r.rows.length === 0) {
+        return ctx.reply("No tienes solicitudes para modificar.");
+      }
+  
+      const solicitud = r.rows[0];
+  
+      await setEstado(userId, "modificar_fecha", {
+        solicitud_id: solicitud.id
+      });
+  
       return ctx.reply(
-        `La última vez solicitaste:\n${ultima.servicio} - ${ultima.fecha}
-
-¿Qué servicio necesitas ahora?`
+        `✏️ Modificando solicitud:
+  
+  Servicio: ${solicitud.servicio}
+  Fecha actual: ${solicitud.fecha}
+  
+  Escribe la nueva fecha.`
       );
     }
-
-    return ctx.reply("¿Qué servicio necesitas?");
+  
   }
-
   /**************** ESTADOS ****************/
 
   const estado = await getEstado(userId);
