@@ -238,13 +238,42 @@ bot.action(/empresa_(.+)/, async (ctx) => {
 /******************************************************************
  * RESPUESTA EMPRESA
  ******************************************************************/
+/******************************************************************
+ * RESPUESTA EMPRESA
+ ******************************************************************/
 bot.action(/aceptar_(.+)/, async (ctx) => {
 
   const solicitudId = ctx.match[1];
 
+  const r = await db.query(
+    "SELECT user_id, servicio, fecha FROM solicitudes WHERE id=$1",
+    [solicitudId]
+  );
+
+  if (r.rows.length === 0) {
+    return ctx.reply("Solicitud no encontrada.");
+  }
+
+  const solicitud = r.rows[0];
+  const clienteId = solicitud.user_id;
+
+  // notificar cliente
+  await bot.telegram.sendMessage(
+    clienteId,
+    `✅ Tu solicitud fue ACEPTADA
+
+Servicio: ${solicitud.servicio}
+Fecha: ${solicitud.fecha}`
+  );
+
   await ctx.answerCbQuery("Solicitud aceptada");
 
-  ctx.editMessageText(`✅ Solicitud ${solicitudId} aceptada`);
+  await ctx.editMessageText(
+    `✅ Solicitud aceptada
+
+Servicio: ${solicitud.servicio}
+Fecha: ${solicitud.fecha}`
+  );
 
 });
 
@@ -252,9 +281,35 @@ bot.action(/rechazar_(.+)/, async (ctx) => {
 
   const solicitudId = ctx.match[1];
 
+  const r = await db.query(
+    "SELECT user_id, servicio, fecha FROM solicitudes WHERE id=$1",
+    [solicitudId]
+  );
+
+  if (r.rows.length === 0) {
+    return ctx.reply("Solicitud no encontrada.");
+  }
+
+  const solicitud = r.rows[0];
+  const clienteId = solicitud.user_id;
+
+  // notificar cliente
+  await bot.telegram.sendMessage(
+    clienteId,
+    `❌ Tu solicitud fue RECHAZADA
+
+Servicio: ${solicitud.servicio}
+Fecha: ${solicitud.fecha}`
+  );
+
   await ctx.answerCbQuery("Solicitud rechazada");
 
-  ctx.editMessageText(`❌ Solicitud ${solicitudId} rechazada`);
+  await ctx.editMessageText(
+    `❌ Solicitud rechazada
+
+Servicio: ${solicitud.servicio}
+Fecha: ${solicitud.fecha}`
+  );
 
 });
 
