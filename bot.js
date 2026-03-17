@@ -338,6 +338,38 @@ return ctx.reply("Empresa vinculada");
 
 }
 
+/**************** REPORTE ****************/
+
+if (text.toLowerCase() === "reporte") {
+
+  const estadoEmpresa = await getEstado(userId);
+  const empresaId = estadoEmpresa?.datos?.empresa_id;
+
+  if (!empresaId) {
+    return ctx.reply("Primero selecciona una empresa.");
+  }
+
+  const r = await db.query(
+    "SELECT id, servicio, fecha, user_id, created_at FROM solicitudes WHERE empresa_id=$1 ORDER BY id DESC",
+    [empresaId]
+  );
+
+  if (r.rows.length === 0) {
+    return ctx.reply("No hay solicitudes para generar reporte.");
+  }
+
+  const csv = stringify(r.rows, {
+    header: true,
+    columns: ["id", "servicio", "fecha", "user_id", "created_at"],
+  });
+
+  return ctx.replyWithDocument({
+    source: Buffer.from(csv),
+    filename: "reporte_solicitudes.csv",
+  });
+
+}
+
 /**************** EMPRESA ****************/
 
 const estadoEmpresa = await getEstado(userId);
@@ -353,9 +385,16 @@ const lower = text.toLowerCase();
 
 let intent = await detectIntent(text,userId);
 
-if(lower.includes("ver solicitud")) intent="ConsultarSolicitudes";
-if(lower.includes("cancelar solicitud")) intent="CancelarSolicitud";
-if(lower.includes("modificar solicitud")) intent="ModificarSolicitud";
+// detección flexible
+if(lower.includes("ver")) intent="ConsultarSolicitudes";
+if(lower.includes("solicitudes")) intent="ConsultarSolicitudes";
+
+if(lower.includes("cancelar")) intent="CancelarSolicitud";
+
+if(lower.includes("modificar")) intent="ModificarSolicitud";
+
+if(lower.includes("nuevo") || lower.includes("solicitar"))
+intent="Solicitud";
 
 console.log("🎯 Intent:",intent);
 
@@ -383,6 +422,30 @@ return ctx.reply(
 );
 
 }
+
+/**************** MODIFICAR ****************/
+
+if(intent==="ModificarSolicitud"){
+
+  const r = await db.query(
+  "SELECT id,servicio,fecha FROM solicitudes WHERE user_id=$1 AND empresa_id=$2 ORDER BY id DESC LIMIT 10",
+  [userId,empresaId]
+  );
+  
+  if(r.rows.length===0){
+  return ctx.reply("No tienes solicitudes para modificar");
+  }
+  
+  const botones = r.rows.map(s=>[
+  { text:`✏️ ${s.servicio} - ${s.fecha}`, callback_data:`modificar_${s.id}` }
+  ]);
+  
+  return ctx.reply(
+  "Selecciona la solicitud que quieres modificar",
+  {reply_markup:{inline_keyboard:botones}}
+  );
+  
+  }
 
 /**************** NUEVA SOLICITUD ****************/
 
