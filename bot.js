@@ -71,14 +71,11 @@ async function initDB() {
 ******************************************************************/
 
 const getEstado = async (userId) => {
-
   const r = await db.query(
     "SELECT paso,datos FROM estados_conversacion WHERE user_id=$1",
     [userId]
   );
-
   return r.rows[0] || null;
-
 };
 
 const setEstado = async (userId,paso,datos={}) => {
@@ -95,32 +92,6 @@ DO UPDATE SET paso=$2,datos=$3,updated_at=CURRENT_TIMESTAMP`,
 
 const clearEstado = async (userId)=>{
   await db.query("DELETE FROM estados_conversacion WHERE user_id=$1",[userId]);
-};
-
-/******************************************************************
- MEMORIA
-******************************************************************/
-
-const getUltimaSolicitud = async (userId,empresaId)=>{
-
-  const r = await db.query(
-"SELECT servicio,fecha FROM solicitudes WHERE user_id=$1 AND empresa_id=$2 ORDER BY id DESC LIMIT 1",
-[userId,empresaId]
-);
-
-return r.rows[0] || null;
-
-};
-
-const getSolicitudesUsuario = async (userId,empresaId)=>{
-
-  const r = await db.query(
-"SELECT servicio,fecha FROM solicitudes WHERE user_id=$1 AND empresa_id=$2 ORDER BY id DESC LIMIT 5",
-[userId,empresaId]
-);
-
-return r.rows;
-
 };
 
 /******************************************************************
@@ -153,31 +124,7 @@ return "fallback";
  IA
 ******************************************************************/
 
-async function buildContextPrompt(userId,empresaId,userMessage){
-
-const estado = await getEstado(userId);
-const solicitudes = await getSolicitudesUsuario(userId,empresaId);
-
-let historial="";
-
-solicitudes.forEach((s,i)=>{
-historial+=`${i+1}. Servicio:${s.servicio}, Fecha:${s.fecha}\n`
-});
-
-return `Eres asistente de solicitudes.
-
-Historial:
-${historial || "Sin historial"}
-
-Estado:${estado?.paso || "ninguno"}
-
-Mensaje:${userMessage}`;
-
-}
-
-async function askDeepSeek(userId,empresaId,text){
-
-const prompt = await buildContextPrompt(userId,empresaId,text);
+async function askDeepSeek(text){
 
 const response = await fetch(
 "https://openrouter.ai/api/v1/chat/completions",
@@ -189,7 +136,7 @@ Authorization:`Bearer ${DEEPSEEK_API_KEY}`,
 },
 body:JSON.stringify({
 model:"deepseek/deepseek-chat",
-messages:[{role:"user",content:prompt}]
+messages:[{role:"user",content:text}]
 })
 }
 );
@@ -237,7 +184,9 @@ await setEstado(userId,"empresa_seleccionada",{empresa_id:empresaId});
 
 await ctx.answerCbQuery();
 
-ctx.reply(`Empresa seleccionada: ${r.rows[0].nombre}`);
+ctx.reply(`🏢 Empresa seleccionada: ${r.rows[0].nombre}
+
+Ahora puedes solicitar servicios`);
 
 });
 
@@ -258,7 +207,7 @@ const solicitud = r.rows[0];
 
 await bot.telegram.sendMessage(
 solicitud.user_id,
-`Tu solicitud fue aceptada
+`✅ Tu solicitud fue aceptada
 
 Servicio:${solicitud.servicio}
 Fecha:${solicitud.fecha}`
@@ -283,7 +232,7 @@ const solicitud = r.rows[0];
 
 await bot.telegram.sendMessage(
 solicitud.user_id,
-`Tu solicitud fue rechazada
+`❌ Tu solicitud fue rechazada
 
 Servicio:${solicitud.servicio}
 Fecha:${solicitud.fecha}`
@@ -296,7 +245,7 @@ ctx.editMessageText("Solicitud rechazada");
 });
 
 /******************************************************************
- ACCIONES CLIENTE
+ CLIENTE
 ******************************************************************/
 
 bot.action(/modificar_(.+)/, async ctx=>{
@@ -323,7 +272,7 @@ await db.query(
 
 await ctx.answerCbQuery();
 
-ctx.editMessageText("Solicitud cancelada");
+ctx.editMessageText("❌ Solicitud cancelada");
 
 });
 
@@ -389,36 +338,6 @@ return ctx.reply("Empresa vinculada");
 
 }
 
-if (text.toLowerCase() === "reporte") {
-
-  const estadoEmpresa = await getEstado(userId);
-  const empresaId = estadoEmpresa?.datos?.empresa_id;
-
-  if (!empresaId) {
-    return ctx.reply("Primero selecciona una empresa.");
-  }
-
-  const r = await db.query(
-    "SELECT id, servicio, fecha, user_id, created_at FROM solicitudes WHERE empresa_id=$1 ORDER BY id DESC",
-    [empresaId]
-  );
-
-  if (r.rows.length === 0) {
-    return ctx.reply("No hay solicitudes para generar reporte.");
-  }
-
-  const csv = stringify(r.rows, {
-    header: true,
-    columns: ["id", "servicio", "fecha", "user_id", "created_at"],
-  });
-
-  return ctx.replyWithDocument({
-    source: Buffer.from(csv),
-    filename: "reporte_solicitudes.csv",
-  });
-
-}
-
 /**************** EMPRESA ****************/
 
 const estadoEmpresa = await getEstado(userId);
@@ -428,25 +347,30 @@ if(!empresaId){
 return mostrarEmpresas(ctx);
 }
 
-/**************** INTENT ****************/
+/**************** PALABRAS CLAVE ****************/
 
-const intent = await detectIntent(text,userId);
+const lower = text.toLowerCase();
 
-console.log ("🎯 Intent:",intent);
-if(intent==="Solicitud"){
+let intent = await detectIntent(text,userId);
 
-await setEstado(userId,"servicio",{empresa_id:empresaId});
+if(lower.includes("ver solicitud")) intent="ConsultarSolicitudes";
+if(lower.includes("cancelar solicitud")) intent="CancelarSolicitud";
+if(lower.includes("modificar solicitud")) intent="ModificarSolicitud";
 
-return ctx.reply("¿Qué servicio necesitas?");
+console.log("🎯 Intent:",intent);
 
-}
+/**************** VER SOLICITUDES ****************/
 
 if(intent==="ConsultarSolicitudes"){
 
 const r = await db.query(
-"SELECT id,servicio,fecha FROM solicitudes WHERE user_id=$1 AND empresa_id=$2 ORDER BY id DESC",
+"SELECT id,servicio,fecha FROM solicitudes WHERE user_id=$1 AND empresa_id=$2 ORDER BY id DESC LIMIT 10",
 [userId,empresaId]
 );
+
+if(r.rows.length===0){
+return ctx.reply("No tienes solicitudes");
+}
 
 const botones = r.rows.map(s=>[
 { text:`✏️ ${s.servicio} - ${s.fecha}`, callback_data:`modificar_${s.id}` },
@@ -454,9 +378,19 @@ const botones = r.rows.map(s=>[
 ]);
 
 return ctx.reply(
-"Tus solicitudes",
+"📋 Tus últimas solicitudes",
 {reply_markup:{inline_keyboard:botones}}
 );
+
+}
+
+/**************** NUEVA SOLICITUD ****************/
+
+if(intent==="Solicitud"){
+
+await setEstado(userId,"servicio",{empresa_id:empresaId});
+
+return ctx.reply("¿Qué servicio necesitas?");
 
 }
 
@@ -496,7 +430,7 @@ if(empresa.rows[0]?.telegram_id){
 
 await bot.telegram.sendMessage(
 empresa.rows[0].telegram_id,
-`Nueva solicitud
+`📩 Nueva solicitud
 
 Servicio:${datos.servicio}
 Fecha:${text}
@@ -516,7 +450,7 @@ inline_keyboard:[[
 
 await clearEstado(userId);
 
-return ctx.reply("Solicitud registrada");
+return ctx.reply("✅ Solicitud registrada");
 
 }
 
@@ -529,7 +463,7 @@ await db.query(
 
 await clearEstado(userId);
 
-return ctx.reply("Solicitud actualizada");
+return ctx.reply("✅ Solicitud actualizada");
 
 }
 
@@ -537,7 +471,7 @@ return ctx.reply("Solicitud actualizada");
 
 /**************** IA ****************/
 
-const ai = await askDeepSeek(userId,empresaId,text);
+const ai = await askDeepSeek(text);
 
 return ctx.reply(ai);
 
