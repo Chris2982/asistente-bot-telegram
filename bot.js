@@ -232,7 +232,7 @@ const solicitud = r.rows[0];
 
 await bot.telegram.sendMessage(
 solicitud.user_id,
-`❌ Tu solicitud fue rechazada
+`❌ Solicitud #${solicitudId}fue rechazada
 
 Servicio:${solicitud.servicio}
 Fecha:${solicitud.fecha}`
@@ -424,7 +424,7 @@ return ctx.reply(
 }
 
 /**************** MODIFICAR ****************/
-
+ 
 if(intent==="ModificarSolicitud"){
 
   const r = await db.query(
@@ -491,23 +491,24 @@ const empresa = await db.query(
 
 if(empresa.rows[0]?.telegram_id){
 
-await bot.telegram.sendMessage(
-empresa.rows[0].telegram_id,
-`📩 Nueva solicitud
-
-Servicio:${datos.servicio}
-Fecha:${text}
-
-ID:${solicitudId}`,
-{
-reply_markup:{
-inline_keyboard:[[
-{ text:"Aceptar", callback_data:`aceptar_${solicitudId}` },
-{ text:"Rechazar", callback_data:`rechazar_${solicitudId}` }
-]]
-}
-}
-);
+  await bot.telegram.sendMessage(
+    empresa.rows[0].telegram_id,
+    `📩 Nueva solicitud #${solicitudId}
+    
+    👤 Cliente: ${ctx.from.first_name}
+    🆔 ID Cliente: ${userId}
+    
+    🛠 Servicio: ${datos.servicio}
+    📅 Fecha: ${text}`,
+    {
+    reply_markup:{
+    inline_keyboard:[[
+    { text:"✅ Aceptar", callback_data:`aceptar_${solicitudId}` },
+    { text:"❌ Rechazar", callback_data:`rechazar_${solicitudId}` }
+    ]]
+    }
+    }
+    );
 
 }
 
