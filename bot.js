@@ -538,12 +538,26 @@ return ctx.reply("✅ Solicitud actualizada");
 if(text.toLowerCase().startsWith("responder")){
 
   const partes = text.split(" ");
-  
   const solicitudId = partes[1];
   const mensaje = partes.slice(2).join(" ");
   
   if(!solicitudId || !mensaje){
-    return ctx.reply("Uso: responder ID mensaje");
+    return ctx.reply(`Uso correcto:
+  
+  responder ID mensaje
+  
+  Ejemplo:
+  responder 3 Tu servicio está confirmado`);
+  }
+  
+  // 🔐 VALIDAR QUE SEA EMPRESA
+  const empresa = await db.query(
+  "SELECT id FROM empresas WHERE telegram_id=$1",
+  [userId]
+  );
+  
+  if(empresa.rows.length === 0){
+    return ctx.reply("❌ Solo las empresas pueden responder solicitudes");
   }
   
   // buscar solicitud
@@ -552,9 +566,9 @@ if(text.toLowerCase().startsWith("responder")){
   [solicitudId]
   );
   
-  if(r.rows.length===0){
+  if(r.rows.length === 0){
     return ctx.reply("Solicitud no encontrada");
-  }
+  }S
   
   // enviar mensaje al cliente
   await bot.telegram.sendMessage(
