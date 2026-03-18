@@ -533,6 +533,41 @@ return ctx.reply("✅ Solicitud actualizada");
 
 }
 
+/**************** RESPONDER EMPRESA → CLIENTE ****************/
+
+if(text.toLowerCase().startsWith("responder")){
+
+  const partes = text.split(" ");
+  
+  const solicitudId = partes[1];
+  const mensaje = partes.slice(2).join(" ");
+  
+  if(!solicitudId || !mensaje){
+    return ctx.reply("Uso: responder ID mensaje");
+  }
+  
+  // buscar solicitud
+  const r = await db.query(
+  "SELECT user_id FROM solicitudes WHERE id=$1",
+  [solicitudId]
+  );
+  
+  if(r.rows.length===0){
+    return ctx.reply("Solicitud no encontrada");
+  }
+  
+  // enviar mensaje al cliente
+  await bot.telegram.sendMessage(
+  r.rows[0].user_id,
+  `💬 Mensaje de la empresa (Solicitud #${solicitudId})
+  
+  ${mensaje}`
+  );
+  
+  return ctx.reply("Mensaje enviado al cliente");
+  
+  }
+
 /**************** IA ****************/
 
 const ai = await askDeepSeek(text);
