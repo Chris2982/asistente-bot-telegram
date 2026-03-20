@@ -282,7 +282,7 @@ ctx.editMessageText("❌ Solicitud cancelada");
 
 bot.start(async ctx=>{
 
-ctx.reply(`Hola ${ctx.from.first_name} Soy tu asistente de servicios. Para comenzar, por favor selecciona la empresa y cuentanosque servicio necesitas`);
+ctx.reply(`Hola 👋 ${ctx.from.first_name} Soy tu asistente de servicios. Para comenzar, por favor selecciona la empresa y cuentame que servicio necesitas?`);
 
 await mostrarEmpresas(ctx);
 
