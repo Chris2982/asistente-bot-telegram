@@ -282,7 +282,7 @@ ctx.editMessageText("❌ Solicitud cancelada");
 
 bot.start(async ctx=>{
 
-ctx.reply(`Hola ${ctx.from.first_name}`);
+ctx.reply(`Hola ${ctx.from.first_name} Soy tu asistente de servicios. Para comenzar, por favor selecciona la empresa y cuentanosque servicio necesitas`);
 
 await mostrarEmpresas(ctx);
 
@@ -569,7 +569,7 @@ if(text.toLowerCase().startsWith("responder")){
   if(r.rows.length === 0){
     return ctx.reply("Solicitud no encontrada");
   }S
-  
+   
   // enviar mensaje al cliente
   await bot.telegram.sendMessage(
   r.rows[0].user_id,
