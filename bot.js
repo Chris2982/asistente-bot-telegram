@@ -507,10 +507,15 @@ console.log("🎯 Intent:",intent);
 
 if(intent==="ConsultarSolicitudes"){
 
-const r = await db.query(
-"SELECT id,servicio,fecha FROM solicitudes WHERE user_id=$1 AND empresa_id=$2 ORDER BY id DESC LIMIT 10",
-[userId,empresaId]
-);
+  console.log("DEBUG USER:", userId);
+  console.log("DEBUG EMPRESA:", empresaId);
+  
+  const r = await db.query(
+  "SELECT id,servicio,fecha FROM solicitudes WHERE user_id=$1 AND empresa_id=$2 ORDER BY id DESC LIMIT 10",
+  [userId,empresaId]
+  );
+  
+  console.log("RESULTADO:", r.rows);
 
 if(r.rows.length===0){
 return ctx.reply("No tienes solicitudes");
