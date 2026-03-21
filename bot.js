@@ -339,11 +339,43 @@ return mostrarEmpresas(ctx);
 });
 
 bot.action("ver_solicitudes", async ctx=>{
-await ctx.answerCbQuery();
-ctx.message = { text: "ver solicitudes" };
-return bot.handleUpdate(ctx.update);
-});
 
+  await ctx.answerCbQuery();
+  
+  const userId = ctx.from.id;
+  const estado = await getEstado(userId);
+  const empresaId = estado?.datos?.empresa_id;
+  
+  if(!empresaId){
+  return ctx.reply("⚠️ Selecciona una empresa primero");
+  }
+  
+  const r = await db.query(
+  "SELECT id,servicio,fecha FROM solicitudes WHERE user_id=$1 AND empresa_id=$2 ORDER BY id DESC LIMIT 10",
+  [userId,empresaId]
+  );
+  
+  if(r.rows.length===0){
+  return ctx.reply("📭 No tienes solicitudes aún");
+  }
+  
+  let texto = "📋 *Tus solicitudes:*\n\n";
+  
+  r.rows.forEach((s,i)=>{
+  texto += `${i+1}. 🛠 ${s.servicio}\n📅 ${s.fecha}\n\n`;
+  });
+  
+  const botones = r.rows.map(s=>[
+  { text:`✏️ ${s.id}`, callback_data:`modificar_${s.id}` },
+  { text:`❌ ${s.id}`, callback_data:`cancelar_${s.id}` }
+  ]);
+  
+  return ctx.reply(texto,{
+  parse_mode:"Markdown",
+  reply_markup:{inline_keyboard:botones}
+  });
+  
+  });
 bot.action("nueva_solicitud", async ctx=>{
 
 await ctx.answerCbQuery();
