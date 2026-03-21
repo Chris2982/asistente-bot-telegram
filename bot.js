@@ -506,3 +506,21 @@ bot.on("text", async ctx=>{
   }
   
   });
+
+  /******************************************************************
+ WEBHOOK
+******************************************************************/
+
+const WEBHOOK_PATH="/telegram";
+
+app.post(WEBHOOK_PATH, bot.webhookCallback(WEBHOOK_PATH));
+
+async function start(){
+  await initDB();
+
+  app.listen(PORT, () => {
+    console.log("Servidor corriendo en puerto", PORT);
+  });
+}
+
+start();
