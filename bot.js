@@ -230,6 +230,70 @@ if(!empresa) return ctx.reply("No eres empresa");
 return verSolicitudesEmpresa(ctx, empresa.id);
 });
 
+
+/******************************************************************
+ RESPUESTA EMPRESA
+******************************************************************/
+
+bot.action(/aceptar_(.+)/, async ctx=>{
+
+  const solicitudId = ctx.match[1];
+  
+  const r = await db.query(
+  "SELECT user_id,servicio,fecha FROM solicitudes WHERE id=$1",
+  [solicitudId]
+  );
+  
+  if(!r.rows.length){
+  return ctx.answerCbQuery("Solicitud no encontrada");
+  }
+  
+  const solicitud = r.rows[0];
+  
+  await bot.telegram.sendMessage(
+  solicitud.user_id,
+  `✅ Tu solicitud fue aceptada
+  
+  Servicio: ${solicitud.servicio}
+  Fecha: ${solicitud.fecha}`
+  );
+  
+  await ctx.answerCbQuery("Aceptada");
+  
+  await ctx.editMessageText(`✅ Solicitud #${solicitudId} aceptada`);
+  
+  });
+  
+  
+  bot.action(/rechazar_(.+)/, async ctx=>{
+  
+  const solicitudId = ctx.match[1];
+  
+  const r = await db.query(
+  "SELECT user_id,servicio,fecha FROM solicitudes WHERE id=$1",
+  [solicitudId]
+  );
+  
+  if(!r.rows.length){
+  return ctx.answerCbQuery("Solicitud no encontrada");
+  }
+  
+  const solicitud = r.rows[0];
+  
+  await bot.telegram.sendMessage(
+  solicitud.user_id,
+  `❌ Tu solicitud fue rechazada
+  
+  Servicio: ${solicitud.servicio}
+  Fecha: ${solicitud.fecha}`
+  );
+  
+  await ctx.answerCbQuery("Rechazada");
+  
+  await ctx.editMessageText(`❌ Solicitud #${solicitudId} rechazada`);
+  
+  });
+
 /******************************************************************
  START + INICIO
 ******************************************************************/
