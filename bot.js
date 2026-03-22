@@ -584,19 +584,30 @@ bot.action("nueva_solicitud", async (ctx) => {
 
   const userId = ctx.from.id;
   const estado = await getEstado(userId);
+  const empresaId = estado?.datos?.empresa_id;
 
-  await setEstado(userId, "esperando_empresa_para_nueva_solicitud", {
+  if (!empresaId) {
+    await setEstado(userId, "esperando_empresa_para_nueva_solicitud", {
+      ...(estado?.datos || {}),
+      iniciado: true,
+    });
+
+    return ctx.reply("🏢 Primero selecciona la empresa para esta nueva solicitud", {
+      reply_markup: {
+        inline_keyboard: [[
+          { text: "🏢 Elegir empresa", callback_data: "elegir_empresa" },
+        ]],
+      },
+    });
+  }
+
+  await setEstado(userId, "servicio", {
     ...(estado?.datos || {}),
+    empresa_id: empresaId,
     iniciado: true,
   });
 
-  return ctx.reply("🏢 Primero selecciona la empresa para esta nueva solicitud", {
-    reply_markup: {
-      inline_keyboard: [[
-        { text: "🏢 Elegir empresa", callback_data: "elegir_empresa" },
-      ]],
-    },
-  });
+  return ctx.reply("¿Qué servicio necesitas?");
 });
 
 bot.action("empresa_ver_solicitudes", async (ctx) => {
@@ -727,12 +738,28 @@ bot.on("text", async (ctx) => {
   /**************** ESTADOS DEL FLUJO ****************/
 
   if (estado?.paso === "servicio") {
+    const textoServicio = text.toLowerCase().trim();
+  
+    const frasesGenericas = [
+      "hola",
+      "buenas",
+      "necesito un servicio",
+      "quiero un servicio",
+      "solicitar servicio",
+      "nuevo servicio",
+      "servicio"
+    ];
+  
+    if (frasesGenericas.includes(textoServicio)) {
+      return ctx.reply("🛠 Indícame el servicio específico que necesitas.\n\nEjemplo: pastelería, contabilidad, limpieza, reparación");
+    }
+  
     await setEstado(userId, "fecha", {
       ...datos,
       servicio: text,
       iniciado: true,
     });
-
+  
     return ctx.reply("¿Para qué fecha?");
   }
 
