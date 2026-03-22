@@ -292,6 +292,7 @@ async function mostrarSolicitudesEmpresa(ctx, empresaId) {
     botones.push([
       { text: `✅ Aceptar #${s.id}`, callback_data: `aceptar_${s.id}` },
       { text: `❌ Rechazar #${s.id}`, callback_data: `rechazar_${s.id}` },
+      { text: `💬 Responder #${s.id}`, callback_data: `responder_${s.id}` },
     ]);
   });
 
@@ -438,12 +439,52 @@ bot.action(/^rechazar_(\d+)$/, async (ctx) => {
     solicitud.user_id,
     `❌ Tu solicitud fue rechazada
 
-Servicio: ${solicitud.servicio}
-Fecha: ${solicitud.fecha}`
+ Servicio: ${solicitud.servicio}
+ Fecha: ${solicitud.fecha}`
   );
 
   await ctx.answerCbQuery("Rechazada");
   return ctx.editMessageText(`❌ Solicitud #${solicitudId} rechazada`);
+});
+
+bot.action(/^responder_(\d+)$/, async (ctx) => {
+  const solicitudId = Number(ctx.match[1]);
+  const userId = ctx.from.id;
+
+  const empresa = await esEmpresa(userId);
+  if (!empresa) {
+    return ctx.answerCbQuery("Solo una empresa puede responder");
+  }
+
+  const r = await db.query(
+    `SELECT id, user_id, empresa_id, servicio, fecha
+     FROM solicitudes
+     WHERE id=$1`,
+    [solicitudId]
+  );
+
+  if (!r.rows.length) {
+    return ctx.answerCbQuery("Solicitud no encontrada");
+  }
+
+  const solicitud = r.rows[0];
+
+  if (Number(solicitud.empresa_id) !== Number(empresa.id)) {
+    return ctx.answerCbQuery("Esta solicitud no pertenece a tu empresa");
+  }
+
+  const estadoActual = await getEstado(userId);
+
+  await setEstado(userId, "responder_cliente", {
+    ...(estadoActual?.datos || {}),
+    iniciado: true,
+    solicitud_id: solicitudId,
+  });
+
+  await ctx.answerCbQuery();
+  return ctx.reply(
+    `💬 Respondiendo a la solicitud #${solicitudId}\n\n🛠 Servicio: ${solicitud.servicio}\n📅 Fecha: ${solicitud.fecha}\n\nEscribe el mensaje para el cliente.`
+  );
 });
 /******************************************************************
  CLIENTE: MODIFICAR / CANCELAR
@@ -909,6 +950,69 @@ if (text.startsWith("/soy_empresa")) {
     });
 
     return ctx.reply("✅ Solicitud actualizada");
+  }
+
+  if (estado?.paso === "responder_cliente") {
+    const solicitudId = datos.solicitud_id;
+  
+    if (!solicitudId) {
+      await setEstado(userId, "menu", {
+        ...datos,
+        iniciado: true,
+      });
+      return ctx.reply("⚠️ No encontré la solicitud para responder.");
+    }
+  
+    const empresa = await esEmpresa(userId);
+    if (!empresa) {
+      await setEstado(userId, "menu", {
+        ...datos,
+        iniciado: true,
+      });
+      return ctx.reply("Solo una empresa puede responder solicitudes.");
+    }
+  
+    const r = await db.query(
+      `SELECT id, user_id, empresa_id, servicio, fecha
+       FROM solicitudes
+       WHERE id=$1`,
+      [solicitudId]
+    );
+  
+    if (!r.rows.length) {
+      await setEstado(userId, "menu", {
+        ...datos,
+        iniciado: true,
+      });
+      return ctx.reply("Solicitud no encontrada.");
+    }
+  
+    const solicitud = r.rows[0];
+  
+    if (Number(solicitud.empresa_id) !== Number(empresa.id)) {
+      await setEstado(userId, "menu", {
+        ...datos,
+        iniciado: true,
+      });
+      return ctx.reply("Esa solicitud no pertenece a tu empresa.");
+    }
+  
+    await bot.telegram.sendMessage(
+      solicitud.user_id,
+      `💬 Mensaje de ${empresa.nombre} sobre tu solicitud #${solicitudId}
+  
+  🛠 Servicio: ${solicitud.servicio}
+  📅 Fecha: ${solicitud.fecha}
+  
+  ${text}`
+    );
+  
+    await setEstado(userId, "menu", {
+      ...datos,
+      iniciado: true,
+    });
+  
+    return ctx.reply("✅ Mensaje enviado al cliente");
   }
 
   /**************** INTENTS / TEXTO ****************/
