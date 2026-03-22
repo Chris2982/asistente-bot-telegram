@@ -341,6 +341,20 @@ bot.action(/^seleccionar_empresa_(\d+)$/, async (ctx) => {
   }
 
   const estadoActual = await getEstado(userId);
+  const pasoAnterior = estadoActual?.paso;
+
+  await ctx.answerCbQuery();
+  await ctx.reply(`🏢 Empresa seleccionada: ${empresa.nombre}`);
+
+  if (pasoAnterior === "esperando_empresa_para_nueva_solicitud") {
+    await setEstado(userId, "servicio", {
+      ...(estadoActual?.datos || {}),
+      empresa_id: empresaId,
+      iniciado: true,
+    });
+
+    return ctx.reply("¿Qué servicio necesitas?");
+  }
 
   await setEstado(userId, "menu", {
     ...(estadoActual?.datos || {}),
@@ -348,8 +362,6 @@ bot.action(/^seleccionar_empresa_(\d+)$/, async (ctx) => {
     iniciado: true,
   });
 
-  await ctx.answerCbQuery();
-  await ctx.reply(`🏢 Empresa seleccionada: ${empresa.nombre}`);
   return mostrarMenu(ctx);
 });
 
@@ -572,25 +584,19 @@ bot.action("nueva_solicitud", async (ctx) => {
 
   const userId = ctx.from.id;
   const estado = await getEstado(userId);
-  const empresaId = estado?.datos?.empresa_id;
 
-  if (!empresaId) {
-    return ctx.reply("⚠️ Primero selecciona una empresa", {
-      reply_markup: {
-        inline_keyboard: [[
-          { text: "🏢 Elegir empresa", callback_data: "elegir_empresa" },
-        ]],
-      },
-    });
-  }
-
-  await setEstado(userId, "servicio", {
+  await setEstado(userId, "esperando_empresa_para_nueva_solicitud", {
     ...(estado?.datos || {}),
-    empresa_id: empresaId,
     iniciado: true,
   });
 
-  return ctx.reply("¿Qué servicio necesitas?");
+  return ctx.reply("🏢 Primero selecciona la empresa para esta nueva solicitud", {
+    reply_markup: {
+      inline_keyboard: [[
+        { text: "🏢 Elegir empresa", callback_data: "elegir_empresa" },
+      ]],
+    },
+  });
 });
 
 bot.action("empresa_ver_solicitudes", async (ctx) => {
