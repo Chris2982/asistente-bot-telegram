@@ -217,7 +217,6 @@ async function mostrarEmpresas(ctx) {
     },
   });
 }
-
 async function mostrarSolicitudesCliente(ctx, userId, empresaId) {
   if (!empresaId) {
     return ctx.reply("⚠️ Selecciona una empresa primero", {
@@ -261,38 +260,6 @@ async function mostrarSolicitudesCliente(ctx, userId, empresaId) {
     },
   });
 }
-
-  const r = await db.query(
-    `SELECT id, servicio, fecha
-     FROM solicitudes
-     WHERE user_id=$1 AND empresa_id=$2
-     ORDER BY id DESC
-     LIMIT 10`,
-    [userId, empresaId]
-  );
-
-  if (r.rows.length === 0) {
-    return ctx.reply("📭 No tienes solicitudes aún");
-  }
-
-  let texto = "📋 *Tus solicitudes:*\n\n";
-  const botones = [];
-
-  r.rows.forEach((s, i) => {
-    texto += `${i + 1}. 🛠 ${s.servicio}\n📅 ${s.fecha}\n\n`;
-    botones.push([
-      { text: `✏️ Modificar ${s.id}`, callback_data: `modificar_${s.id}` },
-      { text: `❌ Cancelar ${s.id}`, callback_data: `cancelar_${s.id}` },
-    ]);
-  });
-
-  return ctx.reply(texto, {
-    parse_mode: "Markdown",
-    reply_markup: {
-      inline_keyboard: botones,
-    },
-  });
-
 
 async function mostrarSolicitudesEmpresa(ctx, empresaId) {
   const r = await db.query(
@@ -457,7 +424,6 @@ Fecha: ${solicitud.fecha}`
   await ctx.answerCbQuery("Rechazada");
   return ctx.editMessageText(`❌ Solicitud #${solicitudId} rechazada`);
 });
-
 /******************************************************************
  CLIENTE: MODIFICAR / CANCELAR
 ******************************************************************/
@@ -551,8 +517,7 @@ bot.start(async (ctx) => {
   return ctx.reply(
     `👋 Hola ${ctx.from.first_name}
 
-Bienvenido a tu asistente`
-    ,
+Bienvenido a tu asistente`,
     {
       reply_markup: {
         inline_keyboard: [[
@@ -641,7 +606,6 @@ bot.action("empresa_reportes", async (ctx) => {
 
   return enviarReporteEmpresa(ctx, empresa.id);
 });
-
 /******************************************************************
  MENSAJES
 ******************************************************************/
@@ -717,313 +681,313 @@ bot.on("text", async (ctx) => {
     });
   }
 
-/**************** REPORTE ****************/
+  /**************** REPORTE ****************/
 
-if (text.toLowerCase() === "reporte") {
-  const empresa = await esEmpresa(userId);
+  if (text.toLowerCase() === "reporte") {
+    const empresa = await esEmpresa(userId);
 
-  if (!empresa) {
-    return ctx.reply("Solo empresas pueden usar reportes");
+    if (!empresa) {
+      return ctx.reply("Solo empresas pueden usar reportes");
+    }
+
+    return enviarReporteEmpresa(ctx, empresa.id);
   }
 
-  return enviarReporteEmpresa(ctx, empresa.id);
-}
+  /**************** ESTADO / CONTEXTO ****************/
 
-/**************** ESTADO / CONTEXTO ****************/
+  const estado = await getEstado(userId);
+  const datos = estado?.datos || {};
+  const empresaId = datos.empresa_id;
+  const empresaLogueada = await esEmpresa(userId);
 
-const estado = await getEstado(userId);
-const datos = estado?.datos || {};
-const empresaId = datos.empresa_id;
-const empresaLogueada = await esEmpresa(userId);
+  if (!empresaId && !empresaLogueada) {
+    return ctx.reply("⚠️ Selecciona una empresa", {
+      reply_markup: {
+        inline_keyboard: [[
+          { text: "🏢 Elegir empresa", callback_data: "elegir_empresa" },
+        ]],
+      },
+    });
+  }
 
-if (!empresaId && !empresaLogueada) {
-  return ctx.reply("⚠️ Selecciona una empresa", {
-    reply_markup: {
-      inline_keyboard: [[
-        { text: "🏢 Elegir empresa", callback_data: "elegir_empresa" },
-      ]],
-    },
-  });
-}
+  /**************** ESTADOS DEL FLUJO ****************/
 
-/**************** ESTADOS DEL FLUJO ****************/
-
-if (estado?.paso === "servicio") {
-  await setEstado(userId, "fecha", {
-    ...datos,
-    servicio: text,
-    iniciado: true,
-  });
-
-  return ctx.reply("¿Para qué fecha?");
-}
-
-if (estado?.paso === "fecha") {
-  const empresaIdEstado = datos.empresa_id;
-  const servicio = datos.servicio;
-
-  if (!empresaIdEstado || !servicio) {
-    await setEstado(userId, "menu", {
+  if (estado?.paso === "servicio") {
+    await setEstado(userId, "fecha", {
       ...datos,
+      servicio: text,
       iniciado: true,
     });
-    return ctx.reply("⚠️ Faltan datos para registrar la solicitud. Intenta de nuevo.");
+
+    return ctx.reply("¿Para qué fecha?");
   }
 
-  const result = await db.query(
-    `INSERT INTO solicitudes (user_id, empresa_id, servicio, fecha)
-     VALUES ($1, $2, $3, $4)
-     RETURNING id`,
-    [userId, empresaIdEstado, servicio, text]
-  );
+  if (estado?.paso === "fecha") {
+    const empresaIdEstado = datos.empresa_id;
+    const servicio = datos.servicio;
 
-  const solicitudId = result.rows[0].id;
+    if (!empresaIdEstado || !servicio) {
+      await setEstado(userId, "menu", {
+        ...datos,
+        iniciado: true,
+      });
+      return ctx.reply("⚠️ Faltan datos para registrar la solicitud. Intenta de nuevo.");
+    }
 
-  const empresa = await db.query(
-    "SELECT telegram_id FROM empresas WHERE id=$1",
-    [empresaIdEstado]
-  );
+    const result = await db.query(
+      `INSERT INTO solicitudes (user_id, empresa_id, servicio, fecha)
+       VALUES ($1, $2, $3, $4)
+       RETURNING id`,
+      [userId, empresaIdEstado, servicio, text]
+    );
 
-  if (empresa.rows[0]?.telegram_id) {
-    await bot.telegram.sendMessage(
-      empresa.rows[0].telegram_id,
-      `📩 Nueva solicitud #${solicitudId}
+    const solicitudId = result.rows[0].id;
+
+    const empresa = await db.query(
+      "SELECT telegram_id FROM empresas WHERE id=$1",
+      [empresaIdEstado]
+    );
+
+    if (empresa.rows[0]?.telegram_id) {
+      await bot.telegram.sendMessage(
+        empresa.rows[0].telegram_id,
+        `📩 Nueva solicitud #${solicitudId}
 
 👤 Cliente: ${ctx.from.first_name}
 🛠 Servicio: ${servicio}
 📅 Fecha: ${text}`,
-      {
-        reply_markup: {
-          inline_keyboard: [[
-            { text: "✅ Aceptar", callback_data: `aceptar_${solicitudId}` },
-            { text: "❌ Rechazar", callback_data: `rechazar_${solicitudId}` },
-          ]],
-        },
-      }
+        {
+          reply_markup: {
+            inline_keyboard: [[
+              { text: "✅ Aceptar", callback_data: `aceptar_${solicitudId}` },
+              { text: "❌ Rechazar", callback_data: `rechazar_${solicitudId}` },
+            ]],
+          },
+        }
+      );
+    }
+
+    await setEstado(userId, "menu", {
+      ...datos,
+      iniciado: true,
+      empresa_id: empresaIdEstado,
+    });
+
+    return ctx.reply("✅ Solicitud registrada");
+  }
+
+  if (estado?.paso === "modificar_fecha") {
+    const solicitudId = datos.solicitud_id;
+
+    if (!solicitudId) {
+      await setEstado(userId, "menu", {
+        ...datos,
+        iniciado: true,
+      });
+      return ctx.reply("⚠️ No encontré la solicitud a modificar.");
+    }
+
+    const r = await db.query(
+      "SELECT id, user_id, empresa_id, servicio, fecha FROM solicitudes WHERE id=$1",
+      [solicitudId]
     );
-  }
 
-  await setEstado(userId, "menu", {
-    ...datos,
-    iniciado: true,
-    empresa_id: empresaIdEstado,
-  });
+    if (!r.rows.length) {
+      await setEstado(userId, "menu", {
+        ...datos,
+        iniciado: true,
+      });
+      return ctx.reply("Solicitud no encontrada");
+    }
 
-  return ctx.reply("✅ Solicitud registrada");
-}
+    const solicitud = r.rows[0];
 
-if (estado?.paso === "modificar_fecha") {
-  const solicitudId = datos.solicitud_id;
+    if (Number(solicitud.user_id) !== Number(userId)) {
+      return ctx.reply("No puedes modificar una solicitud que no es tuya");
+    }
 
-  if (!solicitudId) {
-    await setEstado(userId, "menu", {
-      ...datos,
-      iniciado: true,
-    });
-    return ctx.reply("⚠️ No encontré la solicitud a modificar.");
-  }
+    const fechaAnterior = solicitud.fecha;
+    const nuevaFecha = text;
 
-  const r = await db.query(
-    "SELECT id, user_id, empresa_id, servicio, fecha FROM solicitudes WHERE id=$1",
-    [solicitudId]
-  );
+    await db.query(
+      "UPDATE solicitudes SET fecha=$1 WHERE id=$2",
+      [nuevaFecha, solicitudId]
+    );
 
-  if (!r.rows.length) {
-    await setEstado(userId, "menu", {
-      ...datos,
-      iniciado: true,
-    });
-    return ctx.reply("Solicitud no encontrada");
-  }
+    const empresa = await db.query(
+      "SELECT telegram_id FROM empresas WHERE id=$1",
+      [solicitud.empresa_id]
+    );
 
-  const solicitud = r.rows[0];
-
-  if (Number(solicitud.user_id) !== Number(userId)) {
-    return ctx.reply("No puedes modificar una solicitud que no es tuya");
-  }
-
-  const fechaAnterior = solicitud.fecha;
-  const nuevaFecha = text;
-
-  await db.query(
-    "UPDATE solicitudes SET fecha=$1 WHERE id=$2",
-    [nuevaFecha, solicitudId]
-  );
-
-  const empresa = await db.query(
-    "SELECT telegram_id, nombre FROM empresas WHERE id=$1",
-    [solicitud.empresa_id]
-  );
-
-  if (empresa.rows[0]?.telegram_id) {
-    await bot.telegram.sendMessage(
-      empresa.rows[0].telegram_id,
-      `✏️ El cliente modificó una solicitud #${solicitudId}
+    if (empresa.rows[0]?.telegram_id) {
+      await bot.telegram.sendMessage(
+        empresa.rows[0].telegram_id,
+        `✏️ El cliente modificó una solicitud #${solicitudId}
 
 👤 Cliente: ${ctx.from.first_name}
 🛠 Servicio: ${solicitud.servicio}
 📅 Fecha anterior: ${fechaAnterior}
 📅 Nueva fecha: ${nuevaFecha}`
+      );
+    }
+
+    await setEstado(userId, "menu", {
+      ...datos,
+      iniciado: true,
+      empresa_id: solicitud.empresa_id,
+    });
+
+    return ctx.reply("✅ Solicitud actualizada");
+  }
+
+  /**************** INTENTS / TEXTO ****************/
+
+  const lower = text.toLowerCase();
+  let intent = await detectIntent(text, userId);
+
+  if (lower === "ver solicitudes") intent = "ConsultarSolicitudes";
+  if (lower === "mis solicitudes") intent = "ConsultarSolicitudes";
+  if (lower === "nueva solicitud") intent = "Solicitud";
+  if (lower === "solicitar servicio") intent = "Solicitud";
+  if (lower === "nuevo servicio") intent = "Solicitud";
+  if (lower === "modificar solicitud") intent = "ModificarSolicitud";
+  if (lower === "cancelar solicitud") intent = "CancelarSolicitud";
+
+  console.log("🎯 Intent:", intent);
+
+  /**************** CONSULTAR SOLICITUDES CLIENTE ****************/
+
+  if (intent === "ConsultarSolicitudes") {
+    return mostrarSolicitudesCliente(ctx, userId, empresaId);
+  }
+
+  /**************** MODIFICAR SOLICITUD ****************/
+
+  if (intent === "ModificarSolicitud") {
+    if (!empresaId) {
+      return ctx.reply("⚠️ Selecciona una empresa primero");
+    }
+
+    const r = await db.query(
+      `SELECT id, servicio, fecha
+       FROM solicitudes
+       WHERE user_id=$1 AND empresa_id=$2
+       ORDER BY id DESC
+       LIMIT 10`,
+      [userId, empresaId]
     );
+
+    if (r.rows.length === 0) {
+      return ctx.reply("No tienes solicitudes para modificar");
+    }
+
+    const botones = r.rows.map((s) => [
+      { text: `✏️ ${s.servicio} - ${s.fecha}`, callback_data: `modificar_${s.id}` },
+    ]);
+
+    return ctx.reply("Selecciona la solicitud que quieres modificar", {
+      reply_markup: {
+        inline_keyboard: botones,
+      },
+    });
   }
 
-  await setEstado(userId, "menu", {
-    ...datos,
-    iniciado: true,
-    empresa_id: solicitud.empresa_id,
-  });
+  /**************** CANCELAR SOLICITUD ****************/
 
-  return ctx.reply("✅ Solicitud actualizada");
-}
+  if (intent === "CancelarSolicitud") {
+    if (!empresaId) {
+      return ctx.reply("⚠️ Selecciona una empresa primero");
+    }
 
-/**************** INTENTS / TEXTO ****************/
+    const r = await db.query(
+      `SELECT id, servicio, fecha
+       FROM solicitudes
+       WHERE user_id=$1 AND empresa_id=$2
+       ORDER BY id DESC
+       LIMIT 10`,
+      [userId, empresaId]
+    );
 
-const lower = text.toLowerCase();
-let intent = await detectIntent(text, userId);
+    if (r.rows.length === 0) {
+      return ctx.reply("No tienes solicitudes para cancelar");
+    }
 
-if (lower === "ver solicitudes") intent = "ConsultarSolicitudes";
-if (lower === "mis solicitudes") intent = "ConsultarSolicitudes";
-if (lower === "nueva solicitud") intent = "Solicitud";
-if (lower === "solicitar servicio") intent = "Solicitud";
-if (lower === "nuevo servicio") intent = "Solicitud";
-if (lower === "modificar solicitud") intent = "ModificarSolicitud";
-if (lower === "cancelar solicitud") intent = "CancelarSolicitud";
+    const botones = r.rows.map((s) => [
+      { text: `❌ ${s.servicio} - ${s.fecha}`, callback_data: `cancelar_${s.id}` },
+    ]);
 
-console.log("🎯 Intent:", intent);
-
-/**************** CONSULTAR SOLICITUDES CLIENTE ****************/
-
-if (intent === "ConsultarSolicitudes") {
-  return mostrarSolicitudesCliente(ctx, userId, empresaId);
-}
-
-/**************** MODIFICAR SOLICITUD ****************/
-
-if (intent === "ModificarSolicitud") {
-  if (!empresaId) {
-    return ctx.reply("⚠️ Selecciona una empresa primero");
+    return ctx.reply("Selecciona la solicitud que quieres cancelar", {
+      reply_markup: {
+        inline_keyboard: botones,
+      },
+    });
   }
 
-  const r = await db.query(
-    `SELECT id, servicio, fecha
-     FROM solicitudes
-     WHERE user_id=$1 AND empresa_id=$2
-     ORDER BY id DESC
-     LIMIT 10`,
-    [userId, empresaId]
-  );
+  /**************** NUEVA SOLICITUD ****************/
 
-  if (r.rows.length === 0) {
-    return ctx.reply("No tienes solicitudes para modificar");
+  if (intent === "Solicitud") {
+    if (!empresaId) {
+      return ctx.reply("⚠️ Primero selecciona una empresa");
+    }
+
+    await setEstado(userId, "servicio", {
+      ...datos,
+      empresa_id: empresaId,
+      iniciado: true,
+    });
+
+    return ctx.reply("¿Qué servicio necesitas?");
   }
 
-  const botones = r.rows.map((s) => [
-    { text: `✏️ ${s.servicio} - ${s.fecha}`, callback_data: `modificar_${s.id}` },
-  ]);
+  /**************** RESPONDER EMPRESA → CLIENTE ****************/
 
-  return ctx.reply("Selecciona la solicitud que quieres modificar", {
-    reply_markup: {
-      inline_keyboard: botones,
-    },
-  });
-}
+  if (lower.startsWith("responder")) {
+    const partes = text.split(" ");
+    const solicitudId = partes[1];
+    const mensaje = partes.slice(2).join(" ");
 
-/**************** CANCELAR SOLICITUD ****************/
-
-if (intent === "CancelarSolicitud") {
-  if (!empresaId) {
-    return ctx.reply("⚠️ Selecciona una empresa primero");
-  }
-
-  const r = await db.query(
-    `SELECT id, servicio, fecha
-     FROM solicitudes
-     WHERE user_id=$1 AND empresa_id=$2
-     ORDER BY id DESC
-     LIMIT 10`,
-    [userId, empresaId]
-  );
-
-  if (r.rows.length === 0) {
-    return ctx.reply("No tienes solicitudes para cancelar");
-  }
-
-  const botones = r.rows.map((s) => [
-    { text: `❌ ${s.servicio} - ${s.fecha}`, callback_data: `cancelar_${s.id}` },
-  ]);
-
-  return ctx.reply("Selecciona la solicitud que quieres cancelar", {
-    reply_markup: {
-      inline_keyboard: botones,
-    },
-  });
-}
-
-/**************** NUEVA SOLICITUD ****************/
-
-if (intent === "Solicitud") {
-  if (!empresaId) {
-    return ctx.reply("⚠️ Primero selecciona una empresa");
-  }
-
-  await setEstado(userId, "servicio", {
-    ...datos,
-    empresa_id: empresaId,
-    iniciado: true,
-  });
-
-  return ctx.reply("¿Qué servicio necesitas?");
-}
-
-/**************** RESPONDER EMPRESA → CLIENTE ****************/
-
-if (lower.startsWith("responder")) {
-  const partes = text.split(" ");
-  const solicitudId = partes[1];
-  const mensaje = partes.slice(2).join(" ");
-
-  if (!solicitudId || !mensaje) {
-    return ctx.reply(`Uso correcto:
+    if (!solicitudId || !mensaje) {
+      return ctx.reply(`Uso correcto:
 
 responder ID mensaje
 
 Ejemplo:
 responder 3 Tu servicio está confirmado`);
-  }
+    }
 
-  const empresa = await esEmpresa(userId);
+    const empresa = await esEmpresa(userId);
 
-  if (!empresa) {
-    return ctx.reply("❌ Solo las empresas pueden responder solicitudes");
-  }
+    if (!empresa) {
+      return ctx.reply("❌ Solo las empresas pueden responder solicitudes");
+    }
 
-  const r = await db.query(
-    "SELECT user_id, empresa_id FROM solicitudes WHERE id=$1",
-    [solicitudId]
-  );
+    const r = await db.query(
+      "SELECT user_id, empresa_id FROM solicitudes WHERE id=$1",
+      [solicitudId]
+    );
 
-  if (r.rows.length === 0) {
-    return ctx.reply("Solicitud no encontrada");
-  }
+    if (r.rows.length === 0) {
+      return ctx.reply("Solicitud no encontrada");
+    }
 
-  if (Number(r.rows[0].empresa_id) !== Number(empresa.id)) {
-    return ctx.reply("❌ Esa solicitud no pertenece a tu empresa");
-  }
+    if (Number(r.rows[0].empresa_id) !== Number(empresa.id)) {
+      return ctx.reply("❌ Esa solicitud no pertenece a tu empresa");
+    }
 
-  await bot.telegram.sendMessage(
-    r.rows[0].user_id,
-    `💬 Mensaje de la empresa (Solicitud #${solicitudId})
+    await bot.telegram.sendMessage(
+      r.rows[0].user_id,
+      `💬 Mensaje de la empresa (Solicitud #${solicitudId})
 
 ${mensaje}`
-  );
+    );
 
-  return ctx.reply("Mensaje enviado al cliente");
-}
+    return ctx.reply("Mensaje enviado al cliente");
+  }
 
-/**************** FALLBACK IA ****************/
+  /**************** FALLBACK IA ****************/
 
-const ai = await askDeepSeek(text);
-return ctx.reply(ai);
+  const ai = await askDeepSeek(text);
+  return ctx.reply(ai);
 });
 
 /******************************************************************
