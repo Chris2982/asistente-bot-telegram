@@ -527,11 +527,10 @@ bot.action(/^cancelar_(\d+)$/, async (ctx) => {
 
 bot.start(async (ctx) => {
   const userId = ctx.from.id;
-  const estadoActual = await getEstado(userId);
 
   await setEstado(userId, "inicio", {
-    ...(estadoActual?.datos || {}),
     iniciado: false,
+    empresa_id: null,
   });
 
   return ctx.reply(
@@ -550,17 +549,22 @@ Bienvenido a tu asistente`,
 
 bot.action("iniciar_bot", async (ctx) => {
   const userId = ctx.from.id;
-  const estadoActual = await getEstado(userId);
+  const empresa = await esEmpresa(userId);
 
-  await setEstado(userId, "menu", {
-    ...(estadoActual?.datos || {}),
-    iniciado: true,
-  });
+  if (empresa) {
+    await setEstado(userId, "menu", {
+      iniciado: true,
+    });
+  } else {
+    await setEstado(userId, "menu", {
+      iniciado: true,
+      empresa_id: null,
+    });
+  }
 
   await ctx.answerCbQuery();
   return mostrarMenu(ctx);
 });
-
 /******************************************************************
  MENÚ ACCIONES
 ******************************************************************/
@@ -584,30 +588,20 @@ bot.action("nueva_solicitud", async (ctx) => {
 
   const userId = ctx.from.id;
   const estado = await getEstado(userId);
-  const empresaId = estado?.datos?.empresa_id;
 
-  if (!empresaId) {
-    await setEstado(userId, "esperando_empresa_para_nueva_solicitud", {
-      ...(estado?.datos || {}),
-      iniciado: true,
-    });
-
-    return ctx.reply("🏢 Primero selecciona la empresa para esta nueva solicitud", {
-      reply_markup: {
-        inline_keyboard: [[
-          { text: "🏢 Elegir empresa", callback_data: "elegir_empresa" },
-        ]],
-      },
-    });
-  }
-
-  await setEstado(userId, "servicio", {
+  await setEstado(userId, "esperando_empresa_para_nueva_solicitud", {
     ...(estado?.datos || {}),
-    empresa_id: empresaId,
     iniciado: true,
+    empresa_id: null,
   });
 
-  return ctx.reply("¿Qué servicio necesitas?");
+  return ctx.reply("🏢 Selecciona la empresa para esta nueva solicitud", {
+    reply_markup: {
+      inline_keyboard: [[
+        { text: "🏢 Elegir empresa", callback_data: "elegir_empresa" },
+      ]],
+    },
+  });
 });
 
 bot.action("empresa_ver_solicitudes", async (ctx) => {
