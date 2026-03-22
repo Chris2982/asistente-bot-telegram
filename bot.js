@@ -287,10 +287,11 @@ async function mostrarSolicitudesEmpresa(ctx, empresaId) {
   const botones = [];
 
   r.rows.forEach((s, i) => {
-    texto += `${i + 1}. 🛠 ${s.servicio}\n📅 ${s.fecha}\n👤 Cliente: ${s.user_id}\n\n`;
+    texto += `*${i + 1}.* 🆔 *#${s.id}*\n👤 Cliente: ${s.user_id}\n🛠 Servicio: ${s.servicio}\n📅 Fecha: ${s.fecha}\n\n`;
+
     botones.push([
-      { text: `✅ Aceptar ${s.id}`, callback_data: `aceptar_${s.id}` },
-      { text: `❌ Rechazar ${s.id}`, callback_data: `rechazar_${s.id}` },
+      { text: `✅ Aceptar #${s.id}`, callback_data: `aceptar_${s.id}` },
+      { text: `❌ Rechazar #${s.id}`, callback_data: `rechazar_${s.id}` },
     ]);
   });
 
