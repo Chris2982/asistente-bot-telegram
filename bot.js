@@ -246,6 +246,39 @@ async function mostrarSolicitudesCliente(ctx, userId, empresaId) {
   const botones = [];
 
   r.rows.forEach((s, i) => {
+    texto += `*${i + 1}.* 🛠 *${s.servicio}*\n📅 ${s.fecha}\n🆔 ${s.id}\n\n`;
+
+    botones.push([
+      { text: `✏️ Modificar #${s.id}`, callback_data: `modificar_${s.id}` },
+      { text: `❌ Cancelar #${s.id}`, callback_data: `cancelar_${s.id}` },
+    ]);
+  });
+
+  return ctx.reply(texto, {
+    parse_mode: "Markdown",
+    reply_markup: {
+      inline_keyboard: botones,
+    },
+  });
+}
+
+  const r = await db.query(
+    `SELECT id, servicio, fecha
+     FROM solicitudes
+     WHERE user_id=$1 AND empresa_id=$2
+     ORDER BY id DESC
+     LIMIT 10`,
+    [userId, empresaId]
+  );
+
+  if (r.rows.length === 0) {
+    return ctx.reply("📭 No tienes solicitudes aún");
+  }
+
+  let texto = "📋 *Tus solicitudes:*\n\n";
+  const botones = [];
+
+  r.rows.forEach((s, i) => {
     texto += `${i + 1}. 🛠 ${s.servicio}\n📅 ${s.fecha}\n\n`;
     botones.push([
       { text: `✏️ Modificar ${s.id}`, callback_data: `modificar_${s.id}` },
@@ -259,7 +292,7 @@ async function mostrarSolicitudesCliente(ctx, userId, empresaId) {
       inline_keyboard: botones,
     },
   });
-}
+
 
 async function mostrarSolicitudesEmpresa(ctx, empresaId) {
   const r = await db.query(
@@ -466,7 +499,7 @@ bot.action(/^cancelar_(\d+)$/, async (ctx) => {
   const userId = ctx.from.id;
 
   const r = await db.query(
-    "SELECT id, user_id FROM solicitudes WHERE id=$1",
+    "SELECT id, user_id, empresa_id, servicio, fecha FROM solicitudes WHERE id=$1",
     [solicitudId]
   );
 
@@ -480,7 +513,23 @@ bot.action(/^cancelar_(\d+)$/, async (ctx) => {
     return ctx.answerCbQuery("Esta solicitud no es tuya");
   }
 
+  const empresa = await db.query(
+    "SELECT telegram_id FROM empresas WHERE id=$1",
+    [solicitud.empresa_id]
+  );
+
   await db.query("DELETE FROM solicitudes WHERE id=$1", [solicitudId]);
+
+  if (empresa.rows[0]?.telegram_id) {
+    await bot.telegram.sendMessage(
+      empresa.rows[0].telegram_id,
+      `❌ El cliente canceló la solicitud #${solicitudId}
+
+👤 Cliente: ${ctx.from.first_name}
+🛠 Servicio: ${solicitud.servicio}
+📅 Fecha: ${solicitud.fecha}`
+    );
+  }
 
   await ctx.answerCbQuery("Cancelada");
   return ctx.editMessageText(`❌ Solicitud ${solicitudId} cancelada`);
@@ -775,7 +824,7 @@ if (estado?.paso === "modificar_fecha") {
   }
 
   const r = await db.query(
-    "SELECT id, user_id, empresa_id FROM solicitudes WHERE id=$1",
+    "SELECT id, user_id, empresa_id, servicio, fecha FROM solicitudes WHERE id=$1",
     [solicitudId]
   );
 
@@ -793,10 +842,30 @@ if (estado?.paso === "modificar_fecha") {
     return ctx.reply("No puedes modificar una solicitud que no es tuya");
   }
 
+  const fechaAnterior = solicitud.fecha;
+  const nuevaFecha = text;
+
   await db.query(
     "UPDATE solicitudes SET fecha=$1 WHERE id=$2",
-    [text, solicitudId]
+    [nuevaFecha, solicitudId]
   );
+
+  const empresa = await db.query(
+    "SELECT telegram_id, nombre FROM empresas WHERE id=$1",
+    [solicitud.empresa_id]
+  );
+
+  if (empresa.rows[0]?.telegram_id) {
+    await bot.telegram.sendMessage(
+      empresa.rows[0].telegram_id,
+      `✏️ El cliente modificó una solicitud #${solicitudId}
+
+👤 Cliente: ${ctx.from.first_name}
+🛠 Servicio: ${solicitud.servicio}
+📅 Fecha anterior: ${fechaAnterior}
+📅 Nueva fecha: ${nuevaFecha}`
+    );
+  }
 
   await setEstado(userId, "menu", {
     ...datos,
