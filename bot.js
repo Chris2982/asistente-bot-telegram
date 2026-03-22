@@ -637,54 +637,89 @@ bot.on("text", async (ctx) => {
 
   /**************** COMANDOS QUE DEBEN FUNCIONAR SIEMPRE ****************/
 
-  if (text.startsWith("/crear_empresa")) {
-    const partes = text.split(" ");
-    const nombre = partes[1];
-    const codigo = partes[2];
+if (text === "/ver_empresas") {
+  const r = await db.query("SELECT id, nombre FROM empresas ORDER BY id");
 
-    if (!nombre || !codigo) {
-      return ctx.reply("Uso correcto: /crear_empresa nombre codigo");
-    }
-
-    await db.query(
-      "INSERT INTO empresas (nombre,codigo) VALUES ($1,$2)",
-      [nombre, codigo]
-    );
-
-    return ctx.reply("Empresa creada");
+  if (r.rows.length === 0) {
+    return ctx.reply("No hay empresas");
   }
 
-  if (text.startsWith("/soy_empresa")) {
-    const codigo = text.split(" ")[1];
+  let msg = "📋 Empresas:\n\n";
 
-    if (!codigo) {
-      return ctx.reply("Uso correcto: /soy_empresa codigo");
-    }
+  r.rows.forEach(e => {
+    msg += `#${e.id} - ${e.nombre}\n`;
+  });
 
-    const r = await db.query(
-      "SELECT id FROM empresas WHERE codigo=$1",
-      [codigo]
-    );
+  return ctx.reply(msg);
+}
 
-    if (r.rows.length === 0) {
-      return ctx.reply("Código inválido");
-    }
+if (text.startsWith("/borrar_empresa")) {
+  const nombre = text.replace("/borrar_empresa", "").trim();
 
-    await db.query(
-      "UPDATE empresas SET telegram_id=$1 WHERE id=$2",
-      [userId, r.rows[0].id]
-    );
-
-    const estadoActual = await getEstado(userId);
-
-    await setEstado(userId, "menu", {
-      ...(estadoActual?.datos || {}),
-      iniciado: true,
-    });
-
-    await ctx.reply("Empresa vinculada");
-    return mostrarMenu(ctx);
+  if (!nombre) {
+    return ctx.reply("Uso: /borrar_empresa nombre");
   }
+
+  const r = await db.query(
+    "DELETE FROM empresas WHERE LOWER(nombre) = LOWER($1) RETURNING *",
+    [nombre]
+  );
+
+  if (r.rowCount === 0) {
+    return ctx.reply("No se encontró esa empresa");
+  }
+
+  return ctx.reply(`Empresa eliminada: ${r.rows[0].nombre}`);
+}
+
+if (text.startsWith("/crear_empresa")) {
+  const partes = text.split(" ");
+  const nombre = partes[1];
+  const codigo = partes[2];
+
+  if (!nombre || !codigo) {
+    return ctx.reply("Uso correcto: /crear_empresa nombre codigo");
+  }
+
+  await db.query(
+    "INSERT INTO empresas (nombre,codigo) VALUES ($1,$2)",
+    [nombre, codigo]
+  );
+
+  return ctx.reply("Empresa creada");
+}
+
+if (text.startsWith("/soy_empresa")) {
+  const codigo = text.split(" ")[1];
+
+  if (!codigo) {
+    return ctx.reply("Uso correcto: /soy_empresa codigo");
+  }
+
+  const r = await db.query(
+    "SELECT id FROM empresas WHERE codigo=$1",
+    [codigo]
+  );
+
+  if (r.rows.length === 0) {
+    return ctx.reply("Código inválido");
+  }
+
+  await db.query(
+    "UPDATE empresas SET telegram_id=$1 WHERE id=$2",
+    [userId, r.rows[0].id]
+  );
+
+  const estadoActual = await getEstado(userId);
+
+  await setEstado(userId, "menu", {
+    ...(estadoActual?.datos || {}),
+    iniciado: true,
+  });
+
+  await ctx.reply("Empresa vinculada");
+  return mostrarMenu(ctx);
+}
 
   /******** BLOQUEO GLOBAL ********/
 
