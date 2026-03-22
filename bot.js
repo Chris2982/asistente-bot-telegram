@@ -248,8 +248,16 @@ async function mostrarSolicitudesCliente(ctx, userId, empresaId) {
     texto += `*${i + 1}.* 🛠 *${s.servicio}*\n📅 ${s.fecha}\n🆔 ${s.id}\n\n`;
 
     botones.push([
-      { text: `✏️ Modificar #${s.id}`, callback_data: `modificar_${s.id}` },
-      { text: `❌ Cancelar #${s.id}`, callback_data: `cancelar_${s.id}` },
+      {
+        text: `✏️ Modificar #${s.id}`,
+        callback_data: `modificar_${s.id}`
+      }
+    ]);
+    botones.push([
+      {
+        text: `❌ Cancelar #${s.id} · ${s.servicio} · ${s.fecha}`,
+        callback_data: `cancelar_${s.id}`
+      }
     ]);
   });
 
@@ -843,16 +851,30 @@ bot.on("text", async (ctx) => {
   /**************** INTENTS / TEXTO ****************/
 
   const lower = text.toLowerCase();
-  let intent = await detectIntent(text, userId);
+let intent = await detectIntent(text, userId);
 
-  if (lower === "ver solicitudes") intent = "ConsultarSolicitudes";
-  if (lower === "mis solicitudes") intent = "ConsultarSolicitudes";
-  if (lower === "nueva solicitud") intent = "Solicitud";
-  if (lower === "solicitar servicio") intent = "Solicitud";
-  if (lower === "nuevo servicio") intent = "Solicitud";
-  if (lower === "modificar solicitud") intent = "ModificarSolicitud";
-  if (lower === "cancelar solicitud") intent = "CancelarSolicitud";
+if (["hola", "buenas", "buenos dias", "buenas tardes", "buenas noches"].includes(lower)) {
+  return ctx.reply(
+    `👋 Hola ${ctx.from.first_name}, ¿qué deseas hacer?`,
+    {
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: "➕ Nueva solicitud", callback_data: "nueva_solicitud" }],
+          [{ text: "📋 Ver solicitudes", callback_data: "ver_solicitudes" }],
+          [{ text: "🏢 Elegir empresa", callback_data: "elegir_empresa" }],
+        ],
+      },
+    }
+  );
+}
 
+if (lower === "ver solicitudes") intent = "ConsultarSolicitudes";
+if (lower === "mis solicitudes") intent = "ConsultarSolicitudes";
+if (lower === "nueva solicitud") intent = "Solicitud";
+if (lower === "solicitar servicio") intent = "Solicitud";
+if (lower === "nuevo servicio") intent = "Solicitud";
+if (lower === "modificar solicitud") intent = "ModificarSolicitud";
+if (lower === "cancelar solicitud") intent = "CancelarSolicitud";
   console.log("🎯 Intent:", intent);
 
   /**************** CONSULTAR SOLICITUDES CLIENTE ****************/
@@ -926,17 +948,13 @@ bot.on("text", async (ctx) => {
   /**************** NUEVA SOLICITUD ****************/
 
   if (intent === "Solicitud") {
-    if (!empresaId) {
-      return ctx.reply("⚠️ Primero selecciona una empresa");
-    }
-
-    await setEstado(userId, "servicio", {
-      ...datos,
-      empresa_id: empresaId,
-      iniciado: true,
+    return ctx.reply("🏢 Primero selecciona la empresa para continuar", {
+      reply_markup: {
+        inline_keyboard: [[
+          { text: "🏢 Elegir empresa", callback_data: "elegir_empresa" },
+        ]],
+      },
     });
-
-    return ctx.reply("¿Qué servicio necesitas?");
   }
 
   /**************** RESPONDER EMPRESA → CLIENTE ****************/
