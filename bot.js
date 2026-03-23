@@ -348,6 +348,7 @@ bot.action(/^seleccionar_empresa_(\d+)$/, async (ctx) => {
   await ctx.answerCbQuery();
   await ctx.reply(`🏢 Empresa seleccionada: ${empresa.nombre}`);
 
+  // Si venía de nueva solicitud → continuar flujo
   if (pasoAnterior === "esperando_empresa_para_nueva_solicitud") {
     await setEstado(userId, "servicio", {
       ...(estadoActual?.datos || {}),
@@ -358,6 +359,18 @@ bot.action(/^seleccionar_empresa_(\d+)$/, async (ctx) => {
     return ctx.reply("¿Qué servicio necesitas?");
   }
 
+  // Si venía de ver solicitudes → mostrar solicitudes
+  if (pasoAnterior === "esperando_empresa_para_ver_solicitudes") {
+    await setEstado(userId, "menu", {
+      ...(estadoActual?.datos || {}),
+      empresa_id: empresaId,
+      iniciado: true,
+    });
+
+    return mostrarSolicitudesCliente(ctx, userId, empresaId);
+  }
+
+  // Caso normal: solo guardar empresa y volver a menú
   await setEstado(userId, "menu", {
     ...(estadoActual?.datos || {}),
     empresa_id: empresaId,
@@ -674,14 +687,6 @@ bot.action("iniciar_bot", async (ctx) => {
 ******************************************************************/
 
 bot.action("elegir_empresa", async (ctx) => {
-  const userId = ctx.from.id;
-  const estadoActual = await getEstado(userId);
-
-  await setEstado(userId, "menu", {
-    ...(estadoActual?.datos || {}),
-    iniciado: true,
-  });
-
   await ctx.answerCbQuery();
   return mostrarEmpresas(ctx);
 });
@@ -689,18 +694,34 @@ bot.action("elegir_empresa", async (ctx) => {
 bot.action("ver_solicitudes", async (ctx) => {
   const userId = ctx.from.id;
   const estadoActual = await getEstado(userId);
+  const empresaId = estadoActual?.datos?.empresa_id;
+
+  await ctx.answerCbQuery();
+
+  // Si no hay empresa seleccionada, pedir primero empresa
+  if (!empresaId) {
+    await setEstado(userId, "esperando_empresa_para_ver_solicitudes", {
+      ...(estadoActual?.datos || {}),
+      iniciado: true,
+    });
+
+    return ctx.reply("🏢 Selecciona la empresa para ver tus solicitudes", {
+      reply_markup: {
+        inline_keyboard: [[
+          { text: "🏢 Elegir empresa", callback_data: "elegir_empresa" }
+        ]]
+      }
+    });
+  }
 
   await setEstado(userId, "menu", {
     ...(estadoActual?.datos || {}),
     iniciado: true,
+    empresa_id: empresaId,
   });
 
-  await ctx.answerCbQuery();
-
-  const empresaId = await obtenerEmpresaSeleccionada(userId);
   return mostrarSolicitudesCliente(ctx, userId, empresaId);
 });
-
 bot.action("nueva_solicitud", async (ctx) => {
   await ctx.answerCbQuery();
 
