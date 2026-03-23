@@ -727,11 +727,23 @@ bot.action("nueva_solicitud", async (ctx) => {
 
   const userId = ctx.from.id;
   const estado = await getEstado(userId);
+  const empresaId = estado?.datos?.empresa_id;
 
+  // Si ya hay empresa seleccionada en esta sesión, seguir directo
+  if (empresaId) {
+    await setEstado(userId, "servicio", {
+      ...(estado?.datos || {}),
+      empresa_id: empresaId,
+      iniciado: true,
+    });
+
+    return ctx.reply("¿Qué servicio necesitas?");
+  }
+
+  // Si no hay empresa, pedirla
   await setEstado(userId, "esperando_empresa_para_nueva_solicitud", {
     ...(estado?.datos || {}),
     iniciado: true,
-    empresa_id: null,
   });
 
   return ctx.reply("🏢 Selecciona la empresa para esta nueva solicitud", {
