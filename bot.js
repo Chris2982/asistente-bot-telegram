@@ -475,15 +475,77 @@ bot.action(/^responder_(\d+)$/, async (ctx) => {
 
   const estadoActual = await getEstado(userId);
 
-  await setEstado(userId, "responder_cliente", {
+  await setEstado(userId, "chat_empresa", {
     ...(estadoActual?.datos || {}),
     iniciado: true,
     solicitud_id: solicitudId,
   });
 
   await ctx.answerCbQuery();
+
   return ctx.reply(
-    `💬 Respondiendo a la solicitud #${solicitudId}\n\n🛠 Servicio: ${solicitud.servicio}\n📅 Fecha: ${solicitud.fecha}\n\nEscribe el mensaje para el cliente.`
+    `💬 Chat con cliente de la solicitud #${solicitudId}
+
+🛠 Servicio: ${solicitud.servicio}
+📅 Fecha: ${solicitud.fecha}
+
+Escribe tu mensaje para el cliente.`,
+    {
+      reply_markup: {
+        inline_keyboard: [[
+          { text: "❌ Salir del chat", callback_data: "salir_chat" }
+        ]]
+      }
+    }
+  );
+});
+
+bot.action(/^cliente_responder_(\d+)$/, async (ctx) => {
+  const solicitudId = Number(ctx.match[1]);
+  const userId = ctx.from.id;
+
+  const r = await db.query(
+    `SELECT id, user_id, empresa_id, servicio, fecha
+     FROM solicitudes
+     WHERE id=$1`,
+    [solicitudId]
+  );
+
+  if (!r.rows.length) {
+    return ctx.answerCbQuery("Solicitud no encontrada");
+  }
+
+  const solicitud = r.rows[0];
+
+  if (Number(solicitud.user_id) !== Number(userId)) {
+    return ctx.answerCbQuery("Esta solicitud no es tuya");
+  }
+
+  const estadoActual = await getEstado(userId);
+
+  await setEstado(userId, "chat_cliente", {
+    ...(estadoActual?.datos || {}),
+    iniciado: true,
+    solicitud_id: solicitudId,
+    empresa_id: solicitud.empresa_id,
+  });
+
+  await ctx.answerCbQuery();
+
+  return ctx.reply(
+    `💬 Chat con la empresa sobre tu solicitud #${solicitudId}
+
+🛠 Servicio: ${solicitud.servicio}
+📅 Fecha: ${solicitud.fecha}
+
+Escribe tu mensaje para la empresa.`,
+    {
+      reply_markup: {
+        inline_keyboard: [[
+          { text: "❌ Salir del chat", callback_data: "salir_chat" }
+        ]]
+      }
+    }
   );
 });
 /******************************************************************
@@ -612,16 +674,30 @@ bot.action("iniciar_bot", async (ctx) => {
 ******************************************************************/
 
 bot.action("elegir_empresa", async (ctx) => {
+  const userId = ctx.from.id;
+  const estadoActual = await getEstado(userId);
+
+  await setEstado(userId, "menu", {
+    ...(estadoActual?.datos || {}),
+    iniciado: true,
+  });
+
   await ctx.answerCbQuery();
   return mostrarEmpresas(ctx);
 });
 
 bot.action("ver_solicitudes", async (ctx) => {
+  const userId = ctx.from.id;
+  const estadoActual = await getEstado(userId);
+
+  await setEstado(userId, "menu", {
+    ...(estadoActual?.datos || {}),
+    iniciado: true,
+  });
+
   await ctx.answerCbQuery();
 
-  const userId = ctx.from.id;
   const empresaId = await obtenerEmpresaSeleccionada(userId);
-
   return mostrarSolicitudesCliente(ctx, userId, empresaId);
 });
 
@@ -666,6 +742,19 @@ bot.action("empresa_reportes", async (ctx) => {
   }
 
   return enviarReporteEmpresa(ctx, empresa.id);
+});
+
+bot.action("salir_chat", async (ctx) => {
+  const userId = ctx.from.id;
+  const estadoActual = await getEstado(userId);
+
+  await setEstado(userId, "menu", {
+    ...(estadoActual?.datos || {}),
+    iniciado: true,
+  });
+
+  await ctx.answerCbQuery("Saliste del chat");
+  return mostrarMenu(ctx);
 });
 /******************************************************************
  MENSAJES
@@ -950,6 +1039,147 @@ if (text.startsWith("/soy_empresa")) {
     });
 
     return ctx.reply("✅ Solicitud actualizada");
+  }
+  if (estado?.paso === "chat_empresa") {
+    const solicitudId = datos.solicitud_id;
+  
+    if (!solicitudId) {
+      await setEstado(userId, "menu", {
+        ...datos,
+        iniciado: true,
+      });
+      return ctx.reply("⚠️ No encontré la solicitud para responder.");
+    }
+  
+    const empresa = await esEmpresa(userId);
+    if (!empresa) {
+      await setEstado(userId, "menu", {
+        ...datos,
+        iniciado: true,
+      });
+      return ctx.reply("Solo una empresa puede responder solicitudes.");
+    }
+  
+    const r = await db.query(
+      `SELECT id, user_id, empresa_id, servicio, fecha
+       FROM solicitudes
+       WHERE id=$1`,
+      [solicitudId]
+    );
+  
+    if (!r.rows.length) {
+      await setEstado(userId, "menu", {
+        ...datos,
+        iniciado: true,
+      });
+      return ctx.reply("Solicitud no encontrada.");
+    }
+  
+    const solicitud = r.rows[0];
+  
+    if (Number(solicitud.empresa_id) !== Number(empresa.id)) {
+      await setEstado(userId, "menu", {
+        ...datos,
+        iniciado: true,
+      });
+      return ctx.reply("Esa solicitud no pertenece a tu empresa.");
+    }
+  
+    await bot.telegram.sendMessage(
+      solicitud.user_id,
+      `💬 Mensaje de ${empresa.nombre} sobre tu solicitud #${solicitudId}
+  
+  🛠 Servicio: ${solicitud.servicio}
+  📅 Fecha: ${solicitud.fecha}
+  
+  ${text}`,
+      {
+        reply_markup: {
+          inline_keyboard: [[
+            { text: `💬 Responder #${solicitudId}`, callback_data: `cliente_responder_${solicitudId}` }
+          ]]
+        }
+      }
+    );
+  
+    return ctx.reply("✅ Mensaje enviado al cliente", {
+      reply_markup: {
+        inline_keyboard: [[
+          { text: "❌ Salir del chat", callback_data: "salir_chat" }
+        ]]
+      }
+    });
+  }
+  if (estado?.paso === "chat_cliente") {
+    const solicitudId = datos.solicitud_id;
+  
+    if (!solicitudId) {
+      await setEstado(userId, "menu", {
+        ...datos,
+        iniciado: true,
+      });
+      return ctx.reply("⚠️ No encontré la solicitud para responder.");
+    }
+  
+    const r = await db.query(
+      `SELECT id, user_id, empresa_id, servicio, fecha
+       FROM solicitudes
+       WHERE id=$1`,
+      [solicitudId]
+    );
+  
+    if (!r.rows.length) {
+      await setEstado(userId, "menu", {
+        ...datos,
+        iniciado: true,
+      });
+      return ctx.reply("Solicitud no encontrada.");
+    }
+  
+    const solicitud = r.rows[0];
+  
+    if (Number(solicitud.user_id) !== Number(userId)) {
+      await setEstado(userId, "menu", {
+        ...datos,
+        iniciado: true,
+      });
+      return ctx.reply("Esa solicitud no es tuya.");
+    }
+  
+    const empresa = await db.query(
+      "SELECT telegram_id, nombre FROM empresas WHERE id=$1",
+      [solicitud.empresa_id]
+    );
+  
+    if (!empresa.rows.length || !empresa.rows[0].telegram_id) {
+      return ctx.reply("La empresa no está disponible para responder.");
+    }
+  
+    await bot.telegram.sendMessage(
+      empresa.rows[0].telegram_id,
+      `💬 Respuesta del cliente sobre la solicitud #${solicitudId}
+  
+  👤 Cliente: ${ctx.from.first_name}
+  🛠 Servicio: ${solicitud.servicio}
+  📅 Fecha: ${solicitud.fecha}
+  
+  ${text}`,
+      {
+        reply_markup: {
+          inline_keyboard: [[
+            { text: `💬 Responder #${solicitudId}`, callback_data: `responder_${solicitudId}` }
+          ]]
+        }
+      }
+    );
+  
+    return ctx.reply("✅ Mensaje enviado a la empresa", {
+      reply_markup: {
+        inline_keyboard: [[
+          { text: "❌ Salir del chat", callback_data: "salir_chat" }
+        ]]
+      }
+    });
   }
 
   if (estado?.paso === "responder_cliente") {
