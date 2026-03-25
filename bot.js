@@ -801,22 +801,6 @@ bot.on("text", async (ctx) => {
 
   console.log("👤", userId, "💬", text);
 
-  // ⏳ Expiración de chat por inactividad (10 minutos)
-if (estado?.paso === "chat_empresa" || estado?.paso === "chat_cliente") {
-  const ahora = Date.now();
-  const ultimoMovimiento = datos.chat_updated_at || 0;
-  const LIMITE_CHAT = 10 * 1000;
-
-  if (ahora - ultimoMovimiento > LIMITE_CHAT) {
-    await setEstado(userId, "menu", {
-      ...(datos || {}),
-      iniciado: true,
-    });
-
-    return ctx.reply("⏳ El chat expiró por inactividad. Usa el menú para continuar.");
-  }
-}
-
   /**************** COMANDOS QUE DEBEN FUNCIONAR SIEMPRE ****************/
 
 if (text === "/ver_empresas") {
@@ -935,6 +919,22 @@ if (text.startsWith("/soy_empresa")) {
   const datos = estado?.datos || {};
   const empresaId = datos.empresa_id;
   const empresaLogueada = await esEmpresa(userId);
+
+  // ⏳ Expiración de chat por inactividad (10 minutos)
+if (estado?.paso === "chat_empresa" || estado?.paso === "chat_cliente") {
+  const ahora = Date.now();
+  const ultimoMovimiento = datos.chat_updated_at || 0;
+  const LIMITE_CHAT = 10 * 1000;
+
+  if (ahora - ultimoMovimiento > LIMITE_CHAT) {
+    await setEstado(userId, "menu", {
+      ...(datos || {}),
+      iniciado: true,
+    });
+
+    return ctx.reply("⏳ El chat expiró por inactividad. Usa el menú para continuar.");
+  }
+}
 
   if (!empresaId && !empresaLogueada) {
     return ctx.reply("⚠️ Selecciona una empresa", {
