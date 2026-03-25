@@ -492,6 +492,7 @@ bot.action(/^responder_(\d+)$/, async (ctx) => {
     ...(estadoActual?.datos || {}),
     iniciado: true,
     solicitud_id: solicitudId,
+    chat_updated_at: Date.now(),
   });
 
   await ctx.answerCbQuery();
@@ -541,6 +542,7 @@ bot.action(/^cliente_responder_(\d+)$/, async (ctx) => {
     iniciado: true,
     solicitud_id: solicitudId,
     empresa_id: solicitud.empresa_id,
+    chat_updated_at: Date.now(),
   });
 
   await ctx.answerCbQuery();
@@ -798,6 +800,22 @@ bot.on("text", async (ctx) => {
   const userId = ctx.from.id;
 
   console.log("👤", userId, "💬", text);
+
+  // ⏳ Expiración de chat por inactividad (10 minutos)
+if (estado?.paso === "chat_empresa" || estado?.paso === "chat_cliente") {
+  const ahora = Date.now();
+  const ultimoMovimiento = datos.chat_updated_at || 0;
+  const LIMITE_CHAT = 10 * 1000;
+
+  if (ahora - ultimoMovimiento > LIMITE_CHAT) {
+    await setEstado(userId, "menu", {
+      ...(datos || {}),
+      iniciado: true,
+    });
+
+    return ctx.reply("⏳ El chat expiró por inactividad. Usa el menú para continuar.");
+  }
+}
 
   /**************** COMANDOS QUE DEBEN FUNCIONAR SIEMPRE ****************/
 
@@ -1117,6 +1135,13 @@ if (text.startsWith("/soy_empresa")) {
       });
       return ctx.reply("Esa solicitud no pertenece a tu empresa.");
     }
+
+    await setEstado(userId, "chat_empresa", {
+      ...datos,
+      iniciado: true,
+      solicitud_id: solicitudId,
+      chat_updated_at: Date.now(),
+    });
   
     await bot.telegram.sendMessage(
       solicitud.user_id,
@@ -1187,6 +1212,14 @@ if (text.startsWith("/soy_empresa")) {
     if (!empresa.rows.length || !empresa.rows[0].telegram_id) {
       return ctx.reply("La empresa no está disponible para responder.");
     }
+
+    await setEstado(userId, "chat_cliente", {
+      ...datos,
+      iniciado: true,
+      solicitud_id: solicitudId,
+      empresa_id: solicitud.empresa_id,
+      chat_updated_at: Date.now(),
+    });
   
     await bot.telegram.sendMessage(
       empresa.rows[0].telegram_id,
