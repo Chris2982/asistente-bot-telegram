@@ -498,13 +498,16 @@ bot.action(/^responder_(\d+)$/, async (ctx) => {
   await ctx.answerCbQuery();
 
   return ctx.reply(
-    `💬 Chat con cliente de la solicitud #${solicitudId}
-
- 🛠 Servicio: ${solicitud.servicio}
- 📅 Fecha: ${solicitud.fecha}
-
- Escribe tu mensaje para el cliente.`,
+    `💬 *Modo chat activado*
+  
+  🆔 Solicitud: *#${solicitudId}*
+  🛠 Servicio: *${solicitud.servicio}*
+  📅 Fecha: *${solicitud.fecha}*
+  
+  Escribe tus mensajes normalmente para responder al cliente.
+  Cuando quieras volver al menú, usa el botón de abajo.`,
     {
+      parse_mode: "Markdown",
       reply_markup: {
         inline_keyboard: [[
           { text: "❌ Salir del chat", callback_data: "salir_chat" }
@@ -548,13 +551,16 @@ bot.action(/^cliente_responder_(\d+)$/, async (ctx) => {
   await ctx.answerCbQuery();
 
   return ctx.reply(
-    `💬 Chat con la empresa sobre tu solicitud #${solicitudId}
-
- 🛠 Servicio: ${solicitud.servicio}
- 📅 Fecha: ${solicitud.fecha}
-
- Escribe tu mensaje para la empresa.`,
+    `💬 *Modo chat activado*
+  
+  🆔 Solicitud: *#${solicitudId}*
+  🛠 Servicio: *${solicitud.servicio}*
+  📅 Fecha: *${solicitud.fecha}*
+  
+  Escribe tus mensajes normalmente para responder a la empresa.
+  Cuando quieras volver al menú, usa el botón de abajo.`,
     {
+      parse_mode: "Markdown",
       reply_markup: {
         inline_keyboard: [[
           { text: "❌ Salir del chat", callback_data: "salir_chat" }
@@ -1161,7 +1167,7 @@ if (text.startsWith("/soy_empresa")) {
       }
     );
   
-    return ctx.reply("✅ Mensaje enviado al cliente", {
+    return ctx.reply("✅ Mensaje enviado al cliente . \n\n 💭 Sigues en modo chat", {
       reply_markup: {
         inline_keyboard: [[
           { text: "❌ Salir del chat", callback_data: "salir_chat" }
@@ -1241,7 +1247,7 @@ if (text.startsWith("/soy_empresa")) {
       }
     );
   
-    return ctx.reply("✅ Mensaje enviado a la empresa", {
+    return ctx.reply("✅ Mensaje enviado a la empresa. \n\n 💭 Sigues en modo chat.", {
       reply_markup: {
         inline_keyboard: [[
           { text: "❌ Salir del chat", callback_data: "salir_chat" }
