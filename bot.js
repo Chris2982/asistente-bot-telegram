@@ -924,7 +924,7 @@ if (text.startsWith("/soy_empresa")) {
 if (estado?.paso === "chat_empresa" || estado?.paso === "chat_cliente") {
   const ahora = Date.now();
   const ultimoMovimiento = datos.chat_updated_at || 0;
-  const LIMITE_CHAT = 10 * 1000;
+  const LIMITE_CHAT = 10 * 60 * 1000;
 
   if (ahora - ultimoMovimiento > LIMITE_CHAT) {
     await setEstado(userId, "menu", {
@@ -1147,10 +1147,10 @@ if (estado?.paso === "chat_empresa" || estado?.paso === "chat_cliente") {
       solicitud.user_id,
       `💬 Mensaje de ${empresa.nombre} sobre tu solicitud #${solicitudId}
   
-  🛠 Servicio: ${solicitud.servicio}
-  📅 Fecha: ${solicitud.fecha}
+   🛠 Servicio: ${solicitud.servicio}
+   📅 Fecha: ${solicitud.fecha}
   
-  ${text}`,
+   ${text}`,
       {
         reply_markup: {
           inline_keyboard: [[
@@ -1158,7 +1158,7 @@ if (estado?.paso === "chat_empresa" || estado?.paso === "chat_cliente") {
           ]]
         }
       }
-    );
+    ); 
   
     return ctx.reply("✅ Mensaje enviado al cliente", {
       reply_markup: {
