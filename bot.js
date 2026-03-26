@@ -500,10 +500,10 @@ bot.action(/^responder_(\d+)$/, async (ctx) => {
   return ctx.reply(
     `💬 Chat con cliente de la solicitud #${solicitudId}
 
-🛠 Servicio: ${solicitud.servicio}
-📅 Fecha: ${solicitud.fecha}
+ 🛠 Servicio: ${solicitud.servicio}
+ 📅 Fecha: ${solicitud.fecha}
 
-Escribe tu mensaje para el cliente.`,
+ Escribe tu mensaje para el cliente.`,
     {
       reply_markup: {
         inline_keyboard: [[
@@ -550,10 +550,10 @@ bot.action(/^cliente_responder_(\d+)$/, async (ctx) => {
   return ctx.reply(
     `💬 Chat con la empresa sobre tu solicitud #${solicitudId}
 
-🛠 Servicio: ${solicitud.servicio}
-📅 Fecha: ${solicitud.fecha}
+ 🛠 Servicio: ${solicitud.servicio}
+ 📅 Fecha: ${solicitud.fecha}
 
-Escribe tu mensaje para la empresa.`,
+ Escribe tu mensaje para la empresa.`,
     {
       reply_markup: {
         inline_keyboard: [[
@@ -803,7 +803,7 @@ bot.on("text", async (ctx) => {
 
   /**************** COMANDOS QUE DEBEN FUNCIONAR SIEMPRE ****************/
 
-if (text === "/ver_empresas") {
+ if (text === "/ver_empresas") {
   const r = await db.query("SELECT id, nombre FROM empresas ORDER BY id");
 
   if (r.rows.length === 0) {
@@ -817,9 +817,9 @@ if (text === "/ver_empresas") {
   });
 
   return ctx.reply(msg);
-}
+ }
 
-if (text.startsWith("/borrar_empresa")) {
+ if (text.startsWith("/borrar_empresa")) {
   const nombre = text.replace("/borrar_empresa", "").trim();
 
   if (!nombre) {
@@ -836,9 +836,9 @@ if (text.startsWith("/borrar_empresa")) {
   }
 
   return ctx.reply(`Empresa eliminada: ${r.rows[0].nombre}`);
-}
+ }
 
-if (text.startsWith("/crear_empresa")) {
+ if (text.startsWith("/crear_empresa")) {
   const partes = text.split(" ");
   const nombre = partes[1];
   const codigo = partes[2];
@@ -921,7 +921,7 @@ if (text.startsWith("/soy_empresa")) {
   const empresaLogueada = await esEmpresa(userId);
 
   // ⏳ Expiración de chat por inactividad (10 minutos)
-if (estado?.paso === "chat_empresa" || estado?.paso === "chat_cliente") {
+ if (estado?.paso === "chat_empresa" || estado?.paso === "chat_cliente") {
   const ahora = Date.now();
   const ultimoMovimiento = datos.chat_updated_at || 0;
   const LIMITE_CHAT = 10 * 60 * 1000;
@@ -1135,7 +1135,8 @@ if (estado?.paso === "chat_empresa" || estado?.paso === "chat_cliente") {
       });
       return ctx.reply("Esa solicitud no pertenece a tu empresa.");
     }
-
+  
+    // Mantener vivo el chat
     await setEstado(userId, "chat_empresa", {
       ...datos,
       iniciado: true,
@@ -1147,10 +1148,10 @@ if (estado?.paso === "chat_empresa" || estado?.paso === "chat_cliente") {
       solicitud.user_id,
       `💬 Mensaje de ${empresa.nombre} sobre tu solicitud #${solicitudId}
   
-   🛠 Servicio: ${solicitud.servicio}
-   📅 Fecha: ${solicitud.fecha}
+  🛠 Servicio: ${solicitud.servicio}
+  📅 Fecha: ${solicitud.fecha}
   
-   ${text}`,
+  ${text}`,
       {
         reply_markup: {
           inline_keyboard: [[
@@ -1158,7 +1159,7 @@ if (estado?.paso === "chat_empresa" || estado?.paso === "chat_cliente") {
           ]]
         }
       }
-    ); 
+    );
   
     return ctx.reply("✅ Mensaje enviado al cliente", {
       reply_markup: {
@@ -1212,7 +1213,8 @@ if (estado?.paso === "chat_empresa" || estado?.paso === "chat_cliente") {
     if (!empresa.rows.length || !empresa.rows[0].telegram_id) {
       return ctx.reply("La empresa no está disponible para responder.");
     }
-
+  
+    // Mantener vivo el chat del cliente
     await setEstado(userId, "chat_cliente", {
       ...datos,
       iniciado: true,
