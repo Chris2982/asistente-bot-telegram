@@ -397,21 +397,19 @@ bot.action(/^seleccionar_empresa_(\d+)$/, async (ctx) => {
   await ctx.answerCbQuery();
   await ctx.reply(`🏢 Empresa seleccionada: ${empresa.nombre}`);
 
-  // Si venía de nueva solicitud → continuar flujo
+  // Si venía de nueva solicitud → continuar flujo limpio
   if (pasoAnterior === "esperando_empresa_para_nueva_solicitud") {
     await setEstado(userId, "servicio", {
-      ...(estadoActual?.datos || {}),
       empresa_id: empresaId,
       iniciado: true,
     });
 
-    return ctx.reply("¿Qué servicio necesitas?");
+    return ctx.reply("🛠 ¿Qué servicio necesitas?");
   }
 
   // Si venía de ver solicitudes → mostrar solicitudes
   if (pasoAnterior === "esperando_empresa_para_ver_solicitudes") {
     await setEstado(userId, "menu", {
-      ...(estadoActual?.datos || {}),
       empresa_id: empresaId,
       iniciado: true,
     });
@@ -421,7 +419,6 @@ bot.action(/^seleccionar_empresa_(\d+)$/, async (ctx) => {
 
   // Caso normal: solo guardar empresa y volver a menú
   await setEstado(userId, "menu", {
-    ...(estadoActual?.datos || {}),
     empresa_id: empresaId,
     iniciado: true,
   });
@@ -779,37 +776,36 @@ bot.action("ver_solicitudes", async (ctx) => {
 
   return mostrarSolicitudesCliente(ctx, userId, empresaId);
 });
+
 bot.action("nueva_solicitud", async (ctx) => {
   await ctx.answerCbQuery();
 
   const userId = ctx.from.id;
-  const estado = await getEstado(userId);
-  const empresaId = estado?.datos?.empresa_id;
+  const estadoActual = await getEstado(userId);
+  const empresaId = estadoActual?.datos?.empresa_id;
 
-  // Si ya hay empresa seleccionada en esta sesión, seguir directo
-  if (empresaId) {
-    await setEstado(userId, "servicio", {
-      ...(estado?.datos || {}),
-      empresa_id: empresaId,
-      iniciado: true,
+  // Si no hay empresa seleccionada, primero debe elegir empresa
+  if (!empresaId) {
+    await setEstado(userId, "esperando_empresa_para_nueva_solicitud", {
+      iniciado: true
     });
 
-    return ctx.reply("¿Qué servicio necesitas?");
+    return ctx.reply("🏢 Primero selecciona una empresa", {
+      reply_markup: {
+        inline_keyboard: [[
+          { text: "🏢 Elegir empresa", callback_data: "elegir_empresa" }
+        ]]
+      }
+    });
   }
 
-  // Si no hay empresa, pedirla
-  await setEstado(userId, "esperando_empresa_para_nueva_solicitud", {
-    ...(estado?.datos || {}),
+  // Limpiar datos viejos y empezar flujo limpio
+  await setEstado(userId, "servicio", {
     iniciado: true,
+    empresa_id: empresaId
   });
 
-  return ctx.reply("🏢 Selecciona la empresa para esta nueva solicitud", {
-    reply_markup: {
-      inline_keyboard: [[
-        { text: "🏢 Elegir empresa", callback_data: "elegir_empresa" },
-      ]],
-    },
-  });
+  return ctx.reply("🛠 ¿Qué servicio necesitas?");
 });
 
 bot.action("empresa_ver_solicitudes", async (ctx) => {
