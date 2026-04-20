@@ -328,6 +328,55 @@ async function enviarReporteEmpresa(ctx, empresaId) {
   });
 }
 
+function validarFecha(fechaTexto) {
+  const texto = fechaTexto.trim();
+
+  const formatoLatino = /^(\d{2})[\/-](\d{2})[\/-](\d{4})$/;
+  const formatoISO = /^(\d{4})-(\d{2})-(\d{2})$/;
+
+  let dia, mes, anio;
+
+  if (formatoLatino.test(texto)) {
+    const partes = texto.match(formatoLatino);
+    dia = Number(partes[1]);
+    mes = Number(partes[2]);
+    anio = Number(partes[3]);
+  } else if (formatoISO.test(texto)) {
+    const partes = texto.match(formatoISO);
+    anio = Number(partes[1]);
+    mes = Number(partes[2]);
+    dia = Number(partes[3]);
+  } else {
+    return false;
+  }
+
+  const fecha = new Date(anio, mes - 1, dia);
+
+  return (
+    fecha.getFullYear() === anio &&
+    fecha.getMonth() === mes - 1 &&
+    fecha.getDate() === dia
+  );
+}
+
+function validarServicio(servicioTexto) {
+  const texto = servicioTexto.trim();
+
+  if (texto.length < 3) return false;
+  if (texto.length > 60) return false;
+
+  const patronBasico = /^[A-Za-zÁÉÍÓÚáéíóúÑñ0-9\s.,-]+$/;
+  if (!patronBasico.test(texto)) return false;
+
+  const letras = texto.match(/[A-Za-zÁÉÍÓÚáéíóúÑñ]/g);
+  if (!letras || letras.length < 2) return false;
+
+  const limpio = texto.replace(/\s+/g, "").toLowerCase();
+  if (/^(.)\1+$/.test(limpio)) return false;
+
+  return true;
+}
+
 /******************************************************************
  SELECCIÓN DE EMPRESA
 ******************************************************************/
@@ -968,16 +1017,26 @@ if (text.startsWith("/soy_empresa")) {
     ];
   
     if (frasesGenericas.includes(textoServicio)) {
-      return ctx.reply("🛠 Indícame el servicio específico que necesitas.\n\nEjemplo: pastelería, contabilidad, limpieza, reparación");
+      return ctx.reply(
+        "🛠 Indícame el servicio específico que necesitas.\n\nEjemplos:\n- Contabilidad\n- Limpieza de oficina\n- Pastelería para evento"
+      );
+    }
+  
+    if (!validarServicio(text)) {
+      return ctx.reply(
+        "⚠️ Servicio inválido.\n\nEjemplos válidos:\n- Contabilidad\n- Reparación de equipos\n- Limpieza de oficina"
+      );
     }
   
     await setEstado(userId, "fecha", {
       ...datos,
-      servicio: text,
+      servicio: text.trim(),
       iniciado: true,
     });
   
-    return ctx.reply("¿Para qué fecha?");
+    return ctx.reply(
+      "📅 Ingresa una fecha válida.\n\nFormatos permitidos:\n- 25/12/2026\n- 25-12-2026\n- 2026-12-25"
+    );
   }
 
   if (estado?.paso === "fecha") {
@@ -992,11 +1051,17 @@ if (text.startsWith("/soy_empresa")) {
       return ctx.reply("⚠️ Faltan datos para registrar la solicitud. Intenta de nuevo.");
     }
 
+    if (!validarFecha(text)) {
+      return ctx.reply(
+        "⚠️ Fecha inválida.\n\nUsa uno de estos formatos:\n- 25/12/2026\n- 25-12-2026\n- 2026-12-25"
+      );
+    }
+
     const result = await db.query(
       `INSERT INTO solicitudes (user_id, empresa_id, servicio, fecha)
        VALUES ($1, $2, $3, $4)
        RETURNING id`,
-      [userId, empresaIdEstado, servicio, text]
+      [userId, empresaIdEstado, servicio, text.trim()]
     );
 
     const solicitudId = result.rows[0].id;
@@ -1011,9 +1076,9 @@ if (text.startsWith("/soy_empresa")) {
         empresa.rows[0].telegram_id,
         `📩 Nueva solicitud #${solicitudId}
 
-👤 Cliente: ${ctx.from.first_name}
-🛠 Servicio: ${servicio}
-📅 Fecha: ${text}`,
+   👤 Cliente: ${ctx.from.first_name}
+   🛠 Servicio: ${servicio}
+   📅 Fecha: ${text.trim()}`,
         {
           reply_markup: {
             inline_keyboard: [[
@@ -1045,6 +1110,12 @@ if (text.startsWith("/soy_empresa")) {
       return ctx.reply("⚠️ No encontré la solicitud a modificar.");
     }
 
+    if (!validarFecha(text)) {
+      return ctx.reply(
+        "⚠️ Fecha inválida.\n\nUsa uno de estos formatos:\n- 25/12/2026\n- 25-12-2026\n- 2026-12-25"
+      );
+    }
+
     const r = await db.query(
       "SELECT id, user_id, empresa_id, servicio, fecha FROM solicitudes WHERE id=$1",
       [solicitudId]
@@ -1065,7 +1136,7 @@ if (text.startsWith("/soy_empresa")) {
     }
 
     const fechaAnterior = solicitud.fecha;
-    const nuevaFecha = text;
+    const nuevaFecha = text.trim();
 
     await db.query(
       "UPDATE solicitudes SET fecha=$1 WHERE id=$2",
