@@ -1563,6 +1563,9 @@ bot.catch((err, ctx) => {
 
 const WEBHOOK_PATH = "/telegram";
 app.post(WEBHOOK_PATH, bot.webhookCallback(WEBHOOK_PATH));
+app.get("/", (req, res) => {
+  res.send("Servidor activo");
+});
 
 async function start() {
   try {
