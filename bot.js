@@ -1072,15 +1072,20 @@ if (text.startsWith("/soy_empresa")) {
         empresa.rows[0].telegram_id,
         `📩 Nueva solicitud #${solicitudId}
 
-   👤 Cliente: ${ctx.from.first_name}
-   🛠 Servicio: ${servicio}
-   📅 Fecha: ${text.trim()}`,
+        👤 Cliente: ${ctx.from.first_name}
+        🛠 Servicio: ${servicio}
+        📅 Fecha: ${text.trim()}`,
         {
           reply_markup: {
-            inline_keyboard: [[
-              { text: "✅ Aceptar", callback_data: `aceptar_${solicitudId}` },
-              { text: "❌ Rechazar", callback_data: `rechazar_${solicitudId}` },
-            ]],
+            inline_keyboard: [
+              [
+                { text: "✅ Aceptar", callback_data: `aceptar_${solicitudId}` },
+                { text: "❌ Rechazar", callback_data: `rechazar_${solicitudId}` }
+              ],
+              [
+                { text: "💬 Responder", callback_data: `responder_${solicitudId}` }
+              ]
+            ],
           },
         }
       );
